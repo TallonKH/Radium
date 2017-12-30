@@ -67,7 +67,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private List<String> songList = new ArrayList<>();
 	private Deque<String> playedSongs = new ArrayDeque<>();
 	private WordTrie songTree = new WordTrie();
-	private String[] currentSongInfo = {"No Song Playing", "", "", ""};
+	private String[] currentSongInfo = {"No Song Playing", "", "", ""}; //name, youtube id, url
 	private String lastSong;
 	private Map<String, String> directImgMatches = new HashMap<>();
 	private Map<String, String> folderImgMatches = new HashMap<>();
@@ -818,7 +818,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			mediaPlayer.play();
 		}
 
-		currentSongInfo = getNameInfo(decode(song.getSource()));
+		currentSongInfo = getSongInfo(decode(song.getSource()));
 		print("Now playing: " + currentSongInfo[0]);
 		songSearchbar.setText(currentSongInfo[0]);
 
@@ -866,7 +866,6 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			}
 		} else {
 			print("Grabbing thumbnail...");
-			print(currentSongInfo[1]);
 			Image temp = new Image("http://img.youtube.com/vi/" + currentSongInfo[1] + "/0.jpg");
 			if (temp.getWidth() > 1) {
 				image = smartCrop(temp);
@@ -968,7 +967,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		StringBuilder songNameBuilder = new StringBuilder(16);
 		//noinspection ConstantConditions
 		for (char c : decode(s.substring(s.lastIndexOf('/'))).toCharArray()) {
-			if (c == '@') {
+			if (c == '@' || c == '.') {
 				break;
 			}
 			if ((c >= 'a' && c <= 'z') ||
@@ -1059,9 +1058,9 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	}
 
 	/**
-	 * {Name, ID, path}
+	 * {Name, ID, url}
 	 */
-	private String[] getNameInfo(String src) {
+	private String[] getSongInfo(String src) {
 		int indexA = src.lastIndexOf('/');
 		int indexB = src.lastIndexOf('@');
 		int indexC = src.lastIndexOf('.');
@@ -1070,7 +1069,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 								src.substring(indexB + 1, indexC),
 								src.substring(0, indexA)};
 		} else {
-			return new String[]{src.substring(indexA + 1, indexB),
+			return new String[]{src.substring(indexA + 1, indexC),
 								null,
 								src.substring(0, indexA)};
 		}

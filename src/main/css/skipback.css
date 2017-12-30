@@ -1,0 +1,15 @@
+{
+    -image: url('../resources/skipback.png');
+}
+
+.button {
+    -fx-background-color: transparent;
+    -fx-graphic: -image;
+    -fx-opacity: 0.0;
+    -fx-scale-x: 1.1;
+    -fx-scale-y: 1.05;
+}
+
+.button:hover {
+    -fx-opacity: 0.4;
+}

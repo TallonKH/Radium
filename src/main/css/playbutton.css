@@ -1,0 +1,18 @@
+{
+    -imageA: url('../resources/pause.png');
+    -imageB: url('../resources/play.png');
+}
+
+.toggle-button {
+    -fx-background-color: transparent;
+    -fx-graphic: -imageA;
+    -fx-opacity: 0.0;
+}
+
+.toggle-button:hover {
+    -fx-opacity: 0.4;
+}
+
+.toggle-button:hover:selected {
+    -fx-graphic: -imageB;
+}

@@ -866,11 +866,12 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			}
 		} else {
 			print("Grabbing thumbnail...");
-			Image temp = new Image("http://imgUrl.youtube.com/vi/" + currentSongInfo[1] + "/0.jpg");
+			print(currentSongInfo[1]);
+			Image temp = new Image("http://img.youtube.com/vi/" + currentSongInfo[1] + "/0.jpg");
 			if (temp.getWidth() > 1) {
 				image = smartCrop(temp);
 			} else {
-				image = new Image(getClass().getResourceAsStream("main/resources/logo.png"));
+				image = new Image(getClass().getResourceAsStream("resources/logo.png"));
 			}
 		}
 

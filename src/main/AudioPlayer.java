@@ -1,6 +1,5 @@
 package main;
 
-import com.sun.istack.internal.*;
 import javafx.application.*;
 import javafx.fxml.*;
 import javafx.geometry.*;
@@ -75,9 +74,10 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	}
 
 	private Map<String, String> config;
-	private String imageFolder;
+	private String imageFolderPath;
+	private String imageFolderUrl;
 	private String audioFolderPath;
-	private String audioFolderURL;
+	private String audioFolderUrl;
 	private WatchService audioDirWatcher;
 	//data
 	private List<String> songList = new ArrayList<>();
@@ -1073,7 +1073,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			fileChange.reset();
 		}
 
-		song = new Media(audioFolderURL + name);
+		song = new Media(audioFolderUrl + name);
 		mediaPlayer = new MediaPlayer(song);
 		mediaPlayer.setAudioSpectrumNumBands(bandCount * 2);
 		mediaPlayer.setAudioSpectrumListener(this);
@@ -1095,37 +1095,37 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		songSearchbar.setText(currentSongInfo[0]);
 
 		// Try direct match
-		String imgPath = directImgMatches.get(currentSongInfo[1]);
+		String imgUrl = directImgMatches.get(currentSongInfo[1]);
 
-		if (imgPath != null) {
-			print("Matched to [" + imgPath + "] (direct)");
+		if (imgUrl != null) {
+			print("Matched to [" + imgUrl + "] (direct)");
 		} else {
 			// Try regex match
 			for (Map.Entry<Pattern, String> entry : regexImgMatches.entrySet()) {
 				if (entry.getKey().matcher(currentSongInfo[0]).matches()) {
-					imgPath = entry.getValue();
-					print("Matched to [" + imgPath + "] (regex)");
+					imgUrl = entry.getValue();
+					print("Matched to [" + imgUrl + "] (regex)");
 					break;
 				}
 			}
 		}
 
 		// Try folder match
-		if (imgPath == null) {
-			imgPath = folderImgMatches.get(currentSongInfo[2]);
-			if (imgPath != null) {
-				print("Matched to [" + imgPath + "] (folder)");
+		if (imgUrl == null) {
+			imgUrl = folderImgMatches.get(currentSongInfo[2]);
+			if (imgUrl != null) {
+				print("Matched to [" + imgUrl + "] (folder)");
 			}
 		}
 
 
 		Image image = null;
-		if (imgPath != null) {
-			String fullUrl = imageFolder + imgPath;
-			if (imgPath.charAt(imgPath.length() - 1) == '/') {
+		if (imgUrl != null) {
+			String fullUrl = imageFolderUrl + imgUrl;
+			if (imgUrl.charAt(imgUrl.length() - 1) == '/') {
 				print("Picking random image from folder");
-				//imgPath leads to folder, pick random image from folder
-				File[] images = new File(urlToFile(fullUrl)).listFiles();
+				//imgUrl leads to folder, pick random image from folder
+				File[] images = new File(urlToFile(fullUrl.substring(6))).listFiles();
 				if (images != null) {
 					do {
 						File selected = images[random.nextInt(images.length)];
@@ -1144,7 +1144,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 					} while (image == null);
 				}
 			} else {
-				//imgPath leads to image
+				//imgUrl leads to image
 				image = new Image(fullUrl);
 			}
 		} else {
@@ -1184,7 +1184,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 				recursiveSongGrab(file, list);
 			} else {
 				if (acceptedAudioTypes.contains(getExtension(file.getName()))) {
-					list.add(file.toURI().toString().substring(this.audioFolderURL.length()));
+					list.add(file.toURI().toString().substring(this.audioFolderUrl.length()));
 				}
 			}
 		}
@@ -1219,14 +1219,15 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			if (audioFolderPath.charAt(0) == '~') {
 				audioFolderPath = directoryFile + audioFolderPath.substring(1);
 			}
-			audioFolderURL = fileToUrl(audioFolderPath);
+			audioFolderUrl = fileToUrl(audioFolderPath);
 			print("Audio source folder set to " + audioFolderPath);
 
 			String imageFolderPath = config.get("ImageFolder");
 			if (imageFolderPath.charAt(0) == '~') {
 				imageFolderPath = directoryFile + imageFolderPath.substring(1);
 			}
-			imageFolder = imageFolderPath;
+			this.imageFolderPath = imageFolderPath;
+			imageFolderUrl = fileToUrl(imageFolderPath);
 
 			print("Grabbing images from " + imageFolderPath);
 

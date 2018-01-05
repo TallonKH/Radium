@@ -1,5 +1,6 @@
 package main;
 
+import com.sun.istack.internal.*;
 import javafx.application.*;
 import javafx.fxml.*;
 import javafx.geometry.*;
@@ -16,6 +17,7 @@ import javafx.scene.paint.Color;
 import javafx.scene.shape.*;
 import javafx.stage.*;
 import javafx.util.*;
+import main.AudioPlayer.WordTrie.*;
 import org.apache.commons.math3.analysis.interpolation.*;
 import org.apache.commons.math3.analysis.polynomials.*;
 import tMethods.*;
@@ -25,9 +27,16 @@ import javax.imageio.*;
 import java.awt.*;
 import java.io.*;
 import java.net.*;
+import java.nio.file.*;
+import java.nio.file.Path;
 import java.util.*;
 import java.util.List;
+import java.util.function.*;
 import java.util.regex.*;
+
+import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
+import static java.nio.file.StandardWatchEventKinds.ENTRY_DELETE;
+import static java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY;
 
 //57 fields!
 @SuppressWarnings("FieldCanBeLocal")
@@ -46,6 +55,12 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	public TextField songSearchbar;
 	@FXML
 	public Canvas canvas;
+	@FXML
+	public ImageView centerButton;
+	@FXML
+	public ImageView leftButton;
+	@FXML
+	public ImageView rightButton;
 
 	//util
 	private final static char FSEP = File.separatorChar; // OS File Separator Char - not to be used with URLs
@@ -63,6 +78,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private String imageFolder;
 	private String audioFolderPath;
 	private String audioFolderURL;
+	private WatchService audioDirWatcher;
 	//data
 	private List<String> songList = new ArrayList<>();
 	private Deque<String> playedSongs = new ArrayDeque<>();
@@ -81,12 +97,16 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private float canvasCenterY;
 	//running vars
 	private boolean paused;
+	private boolean looping;
 	private boolean rewinding;
 	private boolean fastForwarding;
 	private boolean pointDragged;
 	private float lastDragAngle;
+	private boolean altDown;
+	private boolean shiftDown;
+	private boolean ctrlDown;
 	//changable settings
-	private float updateInterval = 0.005f; // update interval for audiospectrum analyzer
+	private float updateInterval = 0.016666667f; // update interval for audiospectrum analyzer
 	private int songStackSize = 5; // number of songs to keep the the rewind queue
 	//player
 	private MediaPlayer mediaPlayer;
@@ -117,6 +137,227 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	}
 
 	public static class WordTrie {
+		private static class LetterData {
+			byte byt;
+
+			private LetterData(char ch) {
+				byt = (byte) ch;
+			}
+
+			@Override
+			public int hashCode() {
+				return byt;
+			}
+
+			@SuppressWarnings("EqualsWhichDoesntCheckParameterClass")
+			@Override
+			public boolean equals(Object o) {
+				return o.hashCode() == hashCode();
+			}
+		}
+
+		private static class StrNumPair {
+			public final String str;
+
+			public short num;
+
+			public StrNumPair(String str, short num) {
+				this.str = str;
+				this.num = num;
+			}
+
+			@Override
+			public String toString() {
+				return str + " : " + num;
+			}
+
+		}
+
+		public interface TrieNode {
+
+			String getValue();
+
+			short getNum();
+
+			void setNum(short num);
+
+			boolean isValue();
+
+			void traverse(Consumer<TrieNode> action);
+
+			void print(int depth);
+
+			List<StrNumPair> search(String term, String prev, boolean exact);
+
+			List<StrNumPair> collect(String prev);
+
+		}
+
+		public static class LeafNode implements TrieNode {
+			private String value;
+
+			private short num;
+
+			private LeafNode(String value, short num) {
+				this.value = value;
+				this.num = num;
+			}
+
+			@Override
+			public String getValue() {
+				return value;
+			}
+
+			@Override
+			public short getNum() {
+				return num;
+			}
+
+			@Override
+			public void setNum(short num) {
+				this.num = num;
+			}
+
+			@Override
+			public boolean isValue() {
+				return true;
+			}
+
+			@Override
+			public void traverse(Consumer<TrieNode> action) {
+				action.accept(this);
+			}
+
+			@Override
+			public void print(int depth) {
+				StringBuilder builder = new StringBuilder(depth);
+				for (int i = 0; i < depth; i++) {
+					builder.append("-=");
+				}
+				builder.append(value);
+				System.out.println(builder.toString());
+			}
+
+			@Override
+			public List<StrNumPair> search(String term, String prev, boolean exact) {
+				return (exact ? getValue().equals(term) : getValue().startsWith(term)) ?
+					   Collections.singletonList(new StrNumPair(prev + value, num)) :
+					   Collections.emptyList();
+			}
+
+			@Override
+			public List<StrNumPair> collect(String prev) {
+				return Collections.singletonList(new StrNumPair(prev + value, num));
+			}
+
+		}
+
+		public static class BranchNode extends HashMap<LetterData, TrieNode> implements TrieNode {
+			private String value;
+			private boolean isValue;
+
+			private short num;
+
+			private BranchNode(String value, boolean isValue, short num) {
+				this.value = value;
+				this.isValue = isValue;
+				this.num = num;
+			}
+
+			public void setIsValue(boolean is) {
+				isValue = is;
+			}
+
+			@Override
+			public short getNum() {
+				return num;
+			}
+
+			@Override
+			public void setNum(short num) {
+				this.num = num;
+			}
+
+			@Override
+			public void traverse(Consumer<TrieNode> action) {
+				action.accept(this);
+				for (TrieNode child : this.values()) {
+					child.traverse(action);
+				}
+			}
+
+			/**
+			 * returns a list of full values of child nodes, filtered by a search term
+			 */
+			public List<StrNumPair> search(String term, String prev, boolean exact) {
+				List<StrNumPair> returns = new ArrayList<>();
+				String combined = prev + value;
+
+				if (term.length() > value.length()) {
+					if (term.startsWith(value)) {
+						for (TrieNode child : super.values()) {
+							returns.addAll(child.search(term.substring(value.length()), combined, exact));
+						}
+					}
+				} else {
+					if (exact) {
+						return term.equals(value) ? Collections.singletonList(new StrNumPair(value, num)) : Collections.emptyList();
+					} else {
+						if (value.startsWith(term)) {
+							if (isValue) {
+								returns.add(new StrNumPair(combined, num));
+							}
+							returns.addAll(collect(prev));
+						}
+					}
+				}
+				return returns;
+			}
+
+			/**
+			 * returns a list of full values of child nodes, unfiltered
+			 */
+			public List<StrNumPair> collect(String prev) {
+				List<StrNumPair> returns = new ArrayList<>();
+				String combined = prev + value;
+				if (isValue) {
+					returns.add(new StrNumPair(combined, num));
+				}
+
+				for (TrieNode child : super.values()) {
+					returns.addAll(child.collect(combined));
+				}
+				return returns;
+			}
+
+			@Override
+			public String getValue() {
+				return value;
+			}
+
+			@Override
+			public boolean isValue() {
+				return isValue;
+			}
+
+			@Override
+			public void print(int depth) {
+				StringBuilder builder = new StringBuilder(depth);
+				for (int i = 0; i < depth; i++) {
+					builder.append("-/");
+				}
+				if (!isValue) {
+					builder.append('*');
+				}
+				builder.append(value);
+				System.out.println(builder.toString());
+				for (TrieNode child : super.values()) {
+					child.print(depth + 1);
+				}
+			}
+
+		}
+
 		private Map<LetterData, TrieNode> roots = new HashMap<>();
 
 		public void print() {
@@ -125,9 +366,82 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			}
 		}
 
-		private List<Pair<String, Short>> searchRoot(String term) {
+		public void traverse(Consumer<TrieNode> action) {
+			for (TrieNode node : roots.values()) {
+				node.traverse(action);
+			}
+		}
+
+		public Short remove(String val) {
+			String initialVal = val;
+			if (val.length() == 0) {
+				return null;
+			}
+
+			LetterData firstLetter = new LetterData(val.charAt(0));
+			TrieNode root = roots.get(firstLetter);
+			BranchNode prevRoot = null;
+			if (root == null) {
+				return null;
+			} else {
+				while (true) {
+					String rootVal = root.getValue();
+
+					if (root.getClass().equals(LeafNode.class)) {
+						if (root.getValue().equals(val)) {
+							if (prevRoot == null) {
+								roots.remove(firstLetter);
+							} else {
+								prevRoot.remove(new LetterData(val.charAt(0)));
+								// leave root alone, even if it becomes a useless empty branch - too difficult to remove recursively backwards
+							}
+							return root.getNum();
+						} else {
+							return null;
+						}
+					} else { // rootnode is branch
+						BranchNode rootAsBranch = (BranchNode) root;
+						if (rootVal.length() > val.length()) {
+							return null;
+						}
+						if (rootVal.length() < val.length()) {
+							prevRoot = rootAsBranch;
+							val = val.substring(rootVal.length());
+							root = rootAsBranch.get(new LetterData(val.charAt(0)));
+							if (root == null) {
+								return null;
+							}
+							continue;
+						}
+						if (root.isValue() && rootVal.equals(val)) {
+							if (prevRoot == null) {
+								roots.remove(firstLetter);
+							} else {
+								prevRoot.remove(new LetterData(val.charAt(0)));
+							}
+							for (StrNumPair pair : root.collect(initialVal.substring(0, initialVal.length() - val.length()))) {
+								this.addValue(pair.str, pair.num);
+							}
+							return root.getNum();
+						}
+						return null;
+					}
+				}
+			}
+		}
+
+		public Short getValue(String term) {
+			StrNumPair search = searchHelper(term, true).get(0);
+			return search == null ? null : search.num;
+		}
+
+		public List<StrNumPair> search(String term) {
+			return searchHelper(term, false);
+		}
+
+		private List<StrNumPair> searchHelper(String term, boolean exact) {
 			if (term.length() == 0) {
-				List<Pair<String, Short>> all = new ArrayList<>();
+				List<StrNumPair> all = new ArrayList<>();
 				for (TrieNode node : roots.values()) {
 					all.addAll(node.collect(""));
 				}
@@ -137,7 +451,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			if (root == null) {
 				return new ArrayList<>();
 			}
-			return root.search(term, "");
+			return root.search(term, "", exact);
 		}
 
 		private TrieNode addValue(String val, short num) {
@@ -226,19 +540,13 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 								return node;
 							}
 						}
-					} else {
+					} else { // rootnode is branch
 						BranchNode rootAsBranch = (BranchNode) root;
 						breakCause = 2;
-						if (root.isValue() && rootVal.equals(val.substring(charIndex))) {
+						if (!root.isValue() && rootVal.equals(val.substring(charIndex))) {
 //							System.out.println("Replacing with val branch: " + val);
-							BranchNode newRoot = new BranchNode(rootVal, true, num);
-							newRoot.putAll(rootAsBranch);
-							if (prevRoot == null) {
-								roots.put(firstLetter, newRoot);
-							} else {
-								prevRoot.put(new LetterData(rootVal.charAt(0)), newRoot);
-							}
-							return newRoot;
+							rootAsBranch.setIsValue(true);
+							return rootAsBranch;
 						}
 						while (true) {
 							boolean endV = charIndex == val.length();
@@ -320,167 +628,6 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 				}
 			}
 		}
-
-		public interface TrieNode {
-			String getValue();
-
-			short getNum();
-
-			boolean isValue();
-
-			void print(int depth);
-
-			List<Pair<String, Short>> search(String term, String prev);
-
-			List<Pair<String, Short>> collect(String prev);
-		}
-
-		public static class LeafNode implements TrieNode {
-			private String value;
-			private short num;
-
-			private LeafNode(String value, short num) {
-				this.value = value;
-				this.num = num;
-			}
-
-			@Override
-			public String getValue() {
-				return value;
-			}
-
-			@Override
-			public short getNum() {
-				return num;
-			}
-
-			@Override
-			public boolean isValue() {
-				return true;
-			}
-
-			@Override
-			public void print(int depth) {
-				StringBuilder builder = new StringBuilder(depth);
-				for (int i = 0; i < depth; i++) {
-					builder.append("-=");
-				}
-				builder.append(value);
-				System.out.println(builder.toString());
-			}
-
-			@Override
-			public List<Pair<String, Short>> search(String term, String prev) {
-				return getValue().startsWith(term) ? Collections.singletonList(new Pair<>(prev + value, num)) : new ArrayList<>();
-			}
-
-			@Override
-			public List<Pair<String, Short>> collect(String prev) {
-				return Collections.singletonList(new Pair<>(prev + value, num));
-			}
-		}
-
-		public static class BranchNode extends HashMap<LetterData, TrieNode> implements TrieNode {
-			private String value;
-			private boolean isValue;
-			private short num;
-
-			private BranchNode(String value, boolean isValue, short num) {
-				this.value = value;
-				this.isValue = isValue;
-				this.num = num;
-			}
-
-			@Override
-			public short getNum() {
-				return num;
-			}
-
-			/**
-			 * returns a list of full values of child nodes, filtered by a search term
-			 */
-			public List<Pair<String, Short>> search(String term, String prev) {
-				List<Pair<String, Short>> returns = new ArrayList<>();
-				String combined = prev + value;
-
-				if (term.length() > value.length()) {
-					if (term.startsWith(value)) {
-						for (TrieNode child : super.values()) {
-							returns.addAll(child.search(term.substring(value.length()), combined));
-						}
-					}
-				} else {
-					if (value.startsWith(term)) {
-						if (isValue) {
-							returns.add(new Pair<>(combined, num));
-						}
-						returns.addAll(collect(prev));
-					}
-				}
-				return returns;
-			}
-
-			/**
-			 * returns a list of full values of child nodes, unfiltered
-			 */
-			public List<Pair<String, Short>> collect(String prev) {
-				List<Pair<String, Short>> returns = new ArrayList<>();
-				String combined = prev + value;
-				if (isValue) {
-					returns.add(new Pair<>(combined, num));
-				}
-
-				for (TrieNode child : super.values()) {
-					returns.addAll(child.collect(combined));
-				}
-				return returns;
-			}
-
-			@Override
-			public String getValue() {
-				return value;
-			}
-
-			@Override
-			public boolean isValue() {
-				return isValue;
-			}
-
-			@Override
-			public void print(int depth) {
-				StringBuilder builder = new StringBuilder(depth);
-				for (int i = 0; i < depth; i++) {
-					builder.append("-/");
-				}
-				if (!isValue) {
-					builder.append('*');
-				}
-				builder.append(value);
-				System.out.println(builder.toString());
-				for (TrieNode child : super.values()) {
-					child.print(depth + 1);
-				}
-			}
-		}
-
-		public static class LetterData {
-			byte byt;
-
-			private LetterData(char ch) {
-				byt = (byte) ch;
-			}
-
-			@Override
-			public int hashCode() {
-				return byt;
-			}
-
-			@SuppressWarnings("EqualsWhichDoesntCheckParameterClass")
-			@Override
-			public boolean equals(Object o) {
-				return o.hashCode() == hashCode();
-			}
-		}
 	}
 
 	@FXML
@@ -493,6 +640,50 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 
 		audioVizContext = canvas.getGraphicsContext2D();
 		audioVizContext.setLineCap(StrokeLineCap.ROUND);
+
+		centerButton.addEventHandler(MouseEvent.MOUSE_CLICKED, (e) -> {
+			if (e.getButton().equals(MouseButton.PRIMARY) && mediaPlayer != null) {
+				if (altDown) {
+					if (looping) {
+						centerButton.setImage(new Image(getClass().getResourceAsStream("resources/noloop.png")));
+					} else {
+						centerButton.setImage(new Image(getClass().getResourceAsStream("resources/loop.png")));
+					}
+					looping = !looping;
+				} else {
+					if (paused) {
+						mediaPlayer.play();
+						centerButton.setImage(new Image(getClass().getResourceAsStream("resources/pause.png")));
+					} else {
+						mediaPlayer.pause();
+						centerButton.setImage(new Image(getClass().getResourceAsStream("resources/play.png")));
+					}
+					paused = !paused;
+				}
+			}
+		});
+
+		centerButton.addEventHandler(MouseEvent.MOUSE_ENTERED, (e) -> centerButton.setOpacity(0.4));
+		centerButton.addEventHandler(MouseEvent.MOUSE_EXITED, (e) -> centerButton.setOpacity(0));
+
+		rightButton.addEventHandler(MouseEvent.MOUSE_ENTERED, (e) -> rightButton.setOpacity(0.4));
+		rightButton.addEventHandler(MouseEvent.MOUSE_EXITED, (e) -> rightButton.setOpacity(0));
+		rightButton.addEventHandler(MouseEvent.MOUSE_CLICKED, (e) -> {
+			if (e.getButton().equals(MouseButton.PRIMARY)) {
+				nextSong();
+			}
+		});
+
+		leftButton.addEventHandler(MouseEvent.MOUSE_ENTERED, (e) -> leftButton.setOpacity(0.4));
+		leftButton.addEventHandler(MouseEvent.MOUSE_EXITED, (e) -> leftButton.setOpacity(0));
+		leftButton.addEventHandler(MouseEvent.MOUSE_CLICKED, (e) -> {
+			if (e.getButton().equals(MouseButton.PRIMARY)) {
+				String prev = playedSongs.pollLast();
+				if (prev != null) {
+					playSong(prev);
+				}
+			}
+		});
 	}
 
 	public static void main(String args[]) {
@@ -515,6 +706,44 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		scene.setFill(Color.TRANSPARENT);
 		mainStage.setScene(scene);
 
+		scene.setOnKeyPressed((e) -> {
+			switch (e.getCode()) {
+				case ALT:
+					altDown = true;
+					if (looping) {
+						centerButton.setImage(new Image(getClass().getResourceAsStream("resources/loop.png")));
+					} else {
+						centerButton.setImage(new Image(getClass().getResourceAsStream("resources/noloop.png")));
+					}
+					break;
+				case SHIFT:
+					shiftDown = true;
+					break;
+				case CONTROL:
+					ctrlDown = true;
+					break;
+			}
+		});
+
+		scene.setOnKeyReleased((e) -> {
+			switch (e.getCode()) {
+				case ALT:
+					altDown = false;
+					if (paused) {
+						centerButton.setImage(new Image(getClass().getResourceAsStream("resources/play.png")));
+					} else {
+						centerButton.setImage(new Image(getClass().getResourceAsStream("resources/pause.png")));
+					}
+					break;
+				case SHIFT:
+					shiftDown = false;
+					break;
+				case CONTROL:
+					ctrlDown = false;
+					break;
+			}
+		});
+
 		//move to center
 		Rectangle2D screenBounds = Screen.getPrimary().getBounds();
 		centerX = (float) (screenBounds.getWidth() / 2);
@@ -523,6 +752,10 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		mainStage.setY(centerY - scene.getHeight() / 2);
 
 		readConfig();
+		Path path = new File(audioFolderPath).toPath();
+		audioDirWatcher = path.getFileSystem().newWatchService();
+		path.register(audioDirWatcher, ENTRY_DELETE, ENTRY_CREATE, ENTRY_MODIFY);
+
 		findSongs();
 		readMatches();
 
@@ -537,14 +770,14 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			if (term.length() == 0) {
 				songSearchbar.setText(currentSongInfo[0]);
 			} else {
-				List<Pair<String, Short>> search = songTree.searchRoot(term);
+				List<StrNumPair> search = songTree.search(term);
 				print(search);
 				if (search.size() > 0) {
 					if (lastSong != null) {
 						playedSongs.addLast(lastSong);
 					}
-					Pair<String, Short> shortest = Collections.min(search, Comparator.comparingInt(a -> a.getKey().length()));
-					playSong(songList.get(shortest.getValue()));
+					StrNumPair shortest = Collections.min(search, Comparator.comparingInt(a -> a.str.length()));
+					playSong(songList.get(shortest.num));
 				}
 			}
 		});
@@ -729,7 +962,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 
 		// audio visualizer bands
 		for (int i = 0; i < adjustedSize; i++) {
-			dMagnitudes[i] = Math.max((magnitudes[i] + 60) * 3 + 10, dMagnitudes[i] * 0.99);
+			dMagnitudes[i] = Math.max((magnitudes[i] + 60) * 3 + 10, dMagnitudes[i] * 0.96);
 			xs[i] = magnitudeIncrement * i;
 		}
 		for (int i = 0, l = (bandCount - adjustedSize); i < l; i++) {
@@ -800,6 +1033,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	}
 
 	private void playSong(String name) {
+		song = null;
 		if (mediaPlayer != null) {
 			mediaPlayer.stop();
 			mediaPlayer.dispose();
@@ -807,12 +1041,50 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			mediaPlayer = null;
 		}
 
+		WatchKey fileChange = audioDirWatcher.poll();
+		if (fileChange != null) {
+			for (WatchEvent e : fileChange.pollEvents()) {
+				String[] watchedSongInfo = getSongInfo(e.context().toString());
+				String simplifiedName = simplifySongName(watchedSongInfo[0]);
+				if (acceptedAudioTypes.contains(getExtension(e.context().toString()))) {
+					if (e.kind().equals(ENTRY_DELETE)) {
+						Short search = songTree.remove(simplifiedName);
+						print("Song " + watchedSongInfo[0] + " has been removed from the audio directory");
+						if (search == null) {
+							print("ERROR: song " + e.context() + " should exist in trie, but cannot be found");
+							continue;
+						}
+						songTree.traverse((node) -> {
+							if (node.getNum() > search) {
+								node.setNum((short) (node.getNum() - 1));
+							}
+						});
+						// this should only work if something were to forcefully delete a song while it's in the queue
+						playedSongs.remove(songList.remove(search.intValue()));
+					} else if (e.kind().equals(ENTRY_CREATE)) {
+						print("New song located: " + watchedSongInfo[0]);
+						songTree.addValue(simplifiedName, (short) songList.size());
+						songList.add(e.context().toString());
+					} else if (e.kind().equals(ENTRY_MODIFY)) {
+						print("File Modified: " + e.context());
+					}
+				}
+			}
+			fileChange.reset();
+		}
+
 		song = new Media(audioFolderURL + name);
 		mediaPlayer = new MediaPlayer(song);
 		mediaPlayer.setAudioSpectrumNumBands(bandCount * 2);
 		mediaPlayer.setAudioSpectrumListener(this);
 		mediaPlayer.setAudioSpectrumInterval(updateInterval);
-		mediaPlayer.setOnEndOfMedia(this::nextSong);
+		mediaPlayer.setOnEndOfMedia(() -> {
+			if (looping) {
+				playSong(name);
+			} else {
+				nextSong();
+			}
+		});
 
 		if (!paused) {
 			mediaPlayer.play();
@@ -823,45 +1095,56 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		songSearchbar.setText(currentSongInfo[0]);
 
 		// Try direct match
-		String imgUrl = directImgMatches.get(currentSongInfo[1]);
+		String imgPath = directImgMatches.get(currentSongInfo[1]);
 
-		if (imgUrl != null) {
-			print("Matched to [" + imgUrl + "] (direct)");
+		if (imgPath != null) {
+			print("Matched to [" + imgPath + "] (direct)");
 		} else {
 			// Try regex match
 			for (Map.Entry<Pattern, String> entry : regexImgMatches.entrySet()) {
 				if (entry.getKey().matcher(currentSongInfo[0]).matches()) {
-					imgUrl = entry.getValue();
-					print("Matched to [" + imgUrl + "] (regex)");
+					imgPath = entry.getValue();
+					print("Matched to [" + imgPath + "] (regex)");
 					break;
 				}
 			}
 		}
 
 		// Try folder match
-		if (imgUrl == null) {
-			imgUrl = folderImgMatches.get(currentSongInfo[2]);
-			if (imgUrl != null) {
-				print("Matched to [" + imgUrl + "] (folder)");
+		if (imgPath == null) {
+			imgPath = folderImgMatches.get(currentSongInfo[2]);
+			if (imgPath != null) {
+				print("Matched to [" + imgPath + "] (folder)");
 			}
 		}
 
 
 		Image image = null;
-		if (imgUrl != null) {
-			String fullUrl = "file:/" + imageFolder + imgUrl;
-			if (imgUrl.charAt(imgUrl.length() - 1) == '/') {
-				//imgUrl leads to folder, pick random image from folder
+		if (imgPath != null) {
+			String fullUrl = imageFolder + imgPath;
+			if (imgPath.charAt(imgPath.length() - 1) == '/') {
+				print("Picking random image from folder");
+				//imgPath leads to folder, pick random image from folder
 				File[] images = new File(urlToFile(fullUrl)).listFiles();
 				if (images != null) {
-					try {
-						image = new Image(images[random.nextInt(images.length)].toURI().toURL().toString());
-					} catch (MalformedURLException e) {
-						e.printStackTrace();
-					}
+					do {
+						File selected = images[random.nextInt(images.length)];
+						if (selected.isDirectory()) {
+							images = selected.listFiles();
+							if (images == null) {
+								break;
+							}
+						} else {
+							try {
+								image = new Image(selected.toURI().toURL().toString());
+							} catch (MalformedURLException e) {
+								e.printStackTrace();
+							}
+						}
+					} while (image == null);
 				}
 			} else {
-				//imgUrl leads to image
+				//imgPath leads to image
 				image = new Image(fullUrl);
 			}
 		} else {
@@ -966,7 +1249,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private String simplifySongPath(String s) {
 		StringBuilder songNameBuilder = new StringBuilder(16);
 		//noinspection ConstantConditions
-		for (char c : decode(s.substring(s.lastIndexOf('/'))).toCharArray()) {
+		for (char c : decode(s.substring(Math.max(0, s.lastIndexOf('/')))).toCharArray()) {
 			if (c == '@' || c == '.') {
 				break;
 			}
@@ -1052,6 +1335,13 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			mediaPlayer.stop();
 			mediaPlayer.dispose();
 		}
+		if (audioDirWatcher != null) {
+			try {
+				audioDirWatcher.close();
+			} catch (IOException e) {
+				e.printStackTrace();
+			}
+		}
 		updateConfig();
 		Platform.exit();
 		System.exit(1);
@@ -1067,11 +1357,11 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		if (indexB > -1) {
 			return new String[]{src.substring(indexA + 1, indexB),
 								src.substring(indexB + 1, indexC),
-								src.substring(0, indexA)};
+								indexA < 0 ? null : src.substring(0, indexA)};
 		} else {
 			return new String[]{src.substring(indexA + 1, indexC),
 								null,
-								src.substring(0, indexA)};
+								indexA < 0 ? null : src.substring(0, indexA)};
 		}
 	}
 
@@ -1182,55 +1472,6 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	}
 
 	@FXML
-	public void skipBack(MouseEvent mouseEvent) {
-		String prev = playedSongs.pollLast();
-		if (prev != null) {
-			playSong(prev);
-		}
-	}
-
-	@FXML
-	public void skipForward(MouseEvent mouseEvent) {
-		if (!mouseEvent.isShiftDown()) {
-			nextSong();
-		}
-	}
-
-	@FXML
-	public void forwardPressed(MouseEvent mouseEvent) {
-		if (mouseEvent.isShiftDown()) {
-			//TODO F1X TH1S
-			//TODO when holding shift, replace with fast forward icon
-			fastForwarding = true;
-			mediaPlayer.setRate(2);
-		}
-	}
-
-	@FXML
-	public void forwardReleased(MouseEvent mouseEvent) {
-		if (fastForwarding) {
-			fastForwarding = false;
-			mediaPlayer.setRate(1);
-		}
-	}
-
-	@FXML
-	public void backPressed(MouseEvent mouseEvent) {
-		//TODO replace with restart song button - make icon also
-		if (mouseEvent.isShiftDown()) {
-
-		}
-	}
-
-	@FXML
-	public void backReleased(MouseEvent mouseEvent) {
-		if (rewinding) {
-			rewinding = false;
-			mediaPlayer.setRate(1);
-		}
-	}
-
-	@FXML
 	public void pointPressed(MouseEvent mouseEvent) {
 		if (mediaPlayer != null) {
 			pointDragged = true;
@@ -1267,20 +1508,6 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			}
 			if (!paused) {
 				mediaPlayer.play();
-			}
-		}
-	}
-
-	@FXML
-	public void playClicked(MouseEvent mouseEvent) {
-		//TODO when holding shift, replace with Loop option - don't forget to make loop/unloop icon
-		if (mouseEvent.getButton().equals(MouseButton.PRIMARY) && mediaPlayer != null) {
-			if (paused) {
-				paused = false;
-				mediaPlayer.play();
-			} else {
-				paused = true;
-				mediaPlayer.pause();
 			}
 		}
 	}

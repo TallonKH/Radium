@@ -1,5 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 
+<?import javafx.geometry.*?>
 <?import javafx.scene.text.*?>
 <?import javafx.scene.*?>
 <?import javafx.scene.canvas.*?>
@@ -17,40 +18,35 @@
             <Cursor fx:constant="DEFAULT"/>
         </cursor>
     </Canvas>
-    <Group mouseTransparent="true">
-        <Circle fx:id="circle" fill="#ffffff1a" radius="182.4" stroke="#f8f8f8" strokeType="INSIDE"
-                strokeWidth="8.0"/>
-        <ImageView fx:id="imageView" fitHeight="350.0" fitWidth="350.0" pickOnBounds="true" preserveRatio="true"
-                   smooth="false" translateX="-175.0" translateY="-175.0">
-            <Image url="@../resources/logo.png"/>
-        </ImageView>
+    <Circle fx:id="circle" fill="#ffffff1a" radius="182.4" stroke="#f8f8f8" strokeType="INSIDE" strokeWidth="8.0"/>
+    <ImageView fx:id="imageView" fitHeight="350.0" fitWidth="350.0" pickOnBounds="true" preserveRatio="true"
+               smooth="false">
+        <Image url="@../resources/logo.png"/>
+    </ImageView>
+    <ImageView fx:id="leftButton" fitHeight="350.0" fitWidth="175.0" opacity="0.0" preserveRatio="true"
+               translateX="-87.5">
+        <viewport>
+            <Rectangle2D height="350.0" width="175.0"/>
+        </viewport>
+        <Image url="@../resources/skipback.png"/>
+    </ImageView>
+    <ImageView fx:id="rightButton" fitHeight="350.0" fitWidth="175.0" opacity="0.0" preserveRatio="true"
+               translateX="87.5">
+        <viewport>
+            <Rectangle2D height="350.0" width="175.0"/>
+        </viewport>
+        <Image url="@../resources/skipforward.png"/>
+    </ImageView>
+    <ImageView fx:id="centerButton" fitHeight="200.0" fitWidth="200.0" opacity="0.0" preserveRatio="true">
+        <Image url="@../resources/play.png"/>
+    </ImageView>
+    <Group autoSizeChildren="false" mouseTransparent="true">
+        <Rectangle arcHeight="5.0" arcWidth="5.0" fill="TRANSPARENT" height="364.8" layoutX="-182.4"
+                   layoutY="-182.4" opacity="0.0" smooth="false" stroke="TRANSPARENT" strokeType="INSIDE"
+                   width="364.8"/>
         <Arc fx:id="arc" fill="TRANSPARENT" radiusX="170.5" radiusY="170.5" startAngle="90.0" stroke="#f8f8f899"
              strokeLineCap="ROUND" strokeLineJoin="ROUND" strokeWidth="9.0"/>
     </Group>
-    <Button contentDisplay="GRAPHIC_ONLY" maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity"
-            minWidth="-Infinity" mnemonicParsing="false" onMouseClicked="#skipBack" onMousePressed="#backPressed"
-            onMouseReleased="#backReleased" pickOnBounds="false" prefHeight="350.0" prefWidth="175.0"
-            style="-fx-background-color: #00000000;" stylesheets="@../css/skipback.css" translateX="-87.5">
-        <cursor>
-            <Cursor fx:constant="HAND"/>
-        </cursor>
-    </Button>
-    <Button contentDisplay="GRAPHIC_ONLY" maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity"
-            minWidth="-Infinity" mnemonicParsing="false" onMouseClicked="#skipForward" onMousePressed="#forwardPressed"
-            onMouseReleased="#forwardReleased" pickOnBounds="false" prefHeight="350.0" prefWidth="175.0"
-            stylesheets="@../css/skipforward.css" translateX="87.5">
-        <cursor>
-            <Cursor fx:constant="HAND"/>
-        </cursor>
-    </Button>
-    <ToggleButton contentDisplay="GRAPHIC_ONLY" maxHeight="-Infinity" maxWidth="-Infinity" minHeight="-Infinity"
-                  minWidth="-Infinity" mnemonicParsing="false" onMouseClicked="#playClicked" pickOnBounds="false"
-                  prefHeight="200.0" prefWidth="200.0" style="-fx-background-radius: 195;"
-                  stylesheets="@../css/playbutton.css">
-        <cursor>
-            <Cursor fx:constant="HAND"/>
-        </cursor>
-    </ToggleButton>
     <Circle fx:id="timePoint" fill="#e8e8e866" onMouseDragged="#pointDragged" onMousePressed="#pointPressed"
             onMouseReleased="#pointReleased" radius="15.0" stroke="#c3c3c399" strokeType="INSIDE" strokeWidth="3.0">
         <cursor>
@@ -63,7 +59,7 @@
             <Font name="Roboto Medium" size="18.0"/>
         </font>
     </Label>
-    <TextField fx:id="songSearchbar" alignment="CENTER" maxWidth="1.7976931348623157E308" pickOnBounds="true"
+    <TextField fx:id="songSearchbar" alignment="CENTER" maxWidth="1.7976931348623157E308"
                style="-fx-text-box-border: transparent; -fx-background-color: transparent; -fx-control-inner-background: transparent;"
                text="Radium" translateY="-220.0">
         <font>

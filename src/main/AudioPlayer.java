@@ -13,6 +13,7 @@ import javafx.scene.image.Image;
 import javafx.scene.input.*;
 import javafx.scene.media.*;
 import javafx.scene.paint.Color;
+import javafx.scene.paint.Paint;
 import javafx.scene.shape.*;
 import javafx.stage.*;
 import javafx.util.*;
@@ -37,7 +38,6 @@ import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
 import static java.nio.file.StandardWatchEventKinds.ENTRY_DELETE;
 import static java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY;
 
-//57 fields!
 @SuppressWarnings("FieldCanBeLocal")
 public class AudioPlayer extends Application implements AudioSpectrumListener {
 	@FXML
@@ -98,8 +98,6 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	//running vars
 	private boolean paused;
 	private boolean looping;
-	private boolean rewinding;
-	private boolean fastForwarding;
 	private boolean pointDragged;
 	private float lastDragAngle;
 	private boolean altDown;
@@ -129,11 +127,99 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private Color defaultBarColor = Color.gray(0.9725, 0.8);
 	private double colorDiffThreshold = 0.1;
 	private double colorFreqThreshold = 3;
-	private List<Pair<Color, Integer>> palette = new ArrayList<>(Collections.singletonList(new Pair<>(defaultBaseColor, 1)));
+	private List<Pair<Color, Integer>> palette = Collections.singletonList(new Pair<>(defaultBaseColor, 1));
 	private boolean useDynamicBarOpacity = true;
+	Map<String, DynamicColorer> colorers = new HashMap<>();
+
+	{
+		colorers.put("ENGLISH", new DynamicColorer() {
+			private List<Color> colors = Arrays.asList(Color.web("FFFF00"), Color.web("0000FF"), Color.web("FF0000"), Color.web("800080"),
+													   Color.web("FF4500"), Color.web("008000"), Color.web("800000"));
+			private Color felt = Color.web("32CD3200");
+			private Random random = new Random();
+			@Override
+			public void initialize(int barCount, List<Pair<Color, Integer>> imagePalette) {
+
+			}
+
+			@Override
+			public int setBarCount() {
+				return 128;
+			}
+
+			@Override
+			public Paint getBase(float loudness) {
+				return Color.BLACK;
+			}
+
+			@Override
+			public Paint getBar(int barIndex, float loudness) {
+				return barIndex % 8 == 0 ? Color.BLACK : TColorsFX.colorLerp(felt, colors.get(random.nextInt(colors.size())), loudness);
+			}
+		});
+		colorers.put("PORTAL", new DynamicColorer() {
+			private Color blue = Color.color(0.1647, 0.8118, 0.9725);
+			private Color orange = Color.color(0.9333, 0.5216, 0.0902);
+			double timer = 0;
+
+			@Override
+			public void initialize(int barCount, List<Pair<Color, Integer>> imagePalette) {
+
+			}
+
+			@Override
+			public int setBarCount() {
+				return 128;
+			}
+
+			@Override
+			public Paint getBase(float loudness) {
+				timer += updateInterval;
+				return Color.gray(0.8);
+			}
+
+			@Override
+			public Paint getBar(int barIndex, float loudness) {
+				return (barIndex) % 8 == 0 ? Color.gray(0.8) : TColorsFX.setAlpha(TColorsFX.colorLerp(blue, orange, (timer + barIndex / 16.0) % 2, TMath.LoopModes.BOUNCE), loudness);
+			}
+		});
+		colorers.put("DARK", new DynamicColorer() {
+			@Override
+			public void initialize(int barCount, List<Pair<Color, Integer>> imagePalette) {
+
+			}
+
+			@Override
+			public int setBarCount() {
+				return 128;
+			}
+
+			@Override
+			public Paint getBase(float loudness) {
+				return Color.BLACK;
+			}
+
+			@Override
+			public Paint getBar(int barIndex, float loudness) {
+				return TColorsFX.colorLerp(Color.BLACK, Color.DARKRED, loudness*3, TMath.LoopModes.BOUNCE);
+			}
+		});
+	}
+
+	private DynamicColorer barColorer = null;//colorers.get("PORTAL");
 
 	public enum ColorSourceMode {
 		PALETTE_FIRST, PALETTE_ALL, DEFAULT
+	}
+
+	public interface DynamicColorer {
+		void initialize(int barCount, List<Pair<Color, Integer>> imagePalette);
+
+		int setBarCount();
+
+		Paint getBar(int barIndex, float loudness);
+
+		Paint getBase(float loudness);
 	}
 
 	public static class WordTrie {
@@ -158,7 +244,6 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 
 		private static class StrNumPair {
 			public final String str;
-
 			public short num;
 
 			public StrNumPair(String str, short num) {
@@ -880,7 +965,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		config.put("BarColorMode", mode.name());
 		switch (mode) {
 			case PALETTE_ALL:
-				// this will be handled per audio spectrum update
+				// these will be handled per audio spectrum update
 				break;
 			case PALETTE_FIRST:
 				audioVizContext.setStroke(palette.get(0).getKey());
@@ -971,35 +1056,44 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		}
 
 		PolynomialSplineFunction spline = interpolator.interpolate(xs, dMagnitudes);
+		double avgLoudness = 0;
 		for (int i = 0; i < barCount; i++) {
 			double mag = spline.value(barIncrement * i);
 			double rads = i * radianIncrement;
 			double sin = Math.sin(rads);
 			double cos = Math.cos(rads);
 			double len = 200 + mag;
-			if (barColorMode.equals(ColorSourceMode.PALETTE_ALL)) {
-				if (palette != null && !palette.isEmpty()) {
-					Pair<Color, Integer> pair = palette.get(i % palette.size());
-					Color c = pair.getKey();
+			float alpha = (float) TMath.clamp(mag / 100, 0, 1);
+			avgLoudness+=alpha;
+			if (barColorer == null) {
+				if (barColorMode.equals(ColorSourceMode.PALETTE_ALL)) {
+					if (palette != null && !palette.isEmpty()) {
+						Pair<Color, Integer> pair = palette.get(i % palette.size());
+						Color c = pair.getKey();
+						if (useDynamicBarOpacity) {
+							audioVizContext.setStroke(Color.color(c.getRed(), c.getGreen(), c.getBlue(), alpha));
+						} else {
+							audioVizContext.setStroke(Color.color(c.getRed(), c.getGreen(), c.getBlue(), 0.8));
+						}
+					}
+				} else { // only 1 color is used for all bars
 					if (useDynamicBarOpacity) {
-						audioVizContext.setStroke(Color.color(c.getRed(), c.getGreen(), c.getBlue(),
-															  TMath.lerp(0, 1, TMath.clamp(mag / 100, 0, 1), TMath.LoopModes.STOP)));
-					} else {
-						audioVizContext.setStroke(Color.color(c.getRed(), c.getGreen(), c.getBlue(), 0.8));
+						if (barColorMode.equals(ColorSourceMode.PALETTE_FIRST)) {
+							audioVizContext.setStroke(TColorsFX.setAlpha(palette.get(0).getKey(), alpha));
+						} else {
+							//color default mode
+							audioVizContext.setStroke(TColorsFX.setAlpha(defaultBarColor, alpha));
+						}
 					}
 				}
-			} else {
-				if (useDynamicBarOpacity) {
-					float alpha = (float) TMath.clamp(TMath.lerp(0, 1, mag / 100, TMath.LoopModes.STOP), 0, 1);
-					if (barColorMode.equals(ColorSourceMode.PALETTE_FIRST)) {
-						audioVizContext.setStroke(TColorsFX.setAlpha(palette.get(0).getKey(), alpha));
-					} else {
-						//color default mode
-						audioVizContext.setStroke(TColorsFX.setAlpha(defaultBarColor, alpha));
-					}
-				}
+			} else { // barColorer not null
+				audioVizContext.setStroke(barColorer.getBar(i, alpha));
 			}
 			audioVizContext.strokeLine(canvasCenterX + 190 * sin, canvasCenterY + 190 * cos, canvasCenterX + len * sin, canvasCenterY + len * cos);
+		}
+		if (barColorer != null) {
+			avgLoudness /= barCount;
+			circle.setStroke(barColorer.getBase((float) avgLoudness));
 		}
 	}
 
@@ -1367,10 +1461,10 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	}
 
 	private void updateColorPalette() {
-		palette = TColorsFX.getColorPaletteFast(imageView.getImage(), colorDiffThreshold);
+		palette = Collections.unmodifiableList(TColorsFX.getColorPaletteFast(imageView.getImage(), colorDiffThreshold));
 
 		if (palette.isEmpty()) {
-			palette = new ArrayList<>(Collections.singletonList(new Pair<>(defaultBaseColor, 1)));
+			palette = Collections.singletonList(new Pair<>(defaultBaseColor, 1));
 		}
 
 		if ((barColorMode.equals(ColorSourceMode.PALETTE_ALL) || baseColorMode.equals(ColorSourceMode.PALETTE_ALL)) &&
@@ -1397,7 +1491,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 				}
 			}
 			i = Math.max(1, i);
-			palette = palette.subList(0, Math.max(2, i - (barCount % i)));
+			palette = Collections.unmodifiableList(palette.subList(0, Math.max(2, i - (barCount % i))));
 		} else {
 			if (barColorMode.equals(ColorSourceMode.PALETTE_FIRST)) {
 				audioVizContext.setStroke(palette.get(0).getKey());
@@ -1408,7 +1502,6 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			circle.setStroke(palette.get(0).getKey());
 		}
 	}
-
 
 	private Image smartCrop(Image image) {
 		PixelReader reader = image.getPixelReader();
@@ -1435,10 +1528,9 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 				}
 			}
 		}
-		int cropRadius = Math.min(imgWidth - 2 * mx, imgHeight - 2 * my);
+		int cropRadius = Math.min(imgWidth - 2 * mx, imgHeight - 2 * my) - 20;
 
-		return new WritableImage(reader, (imgWidth - cropRadius) / 2, (imgHeight - cropRadius) / 2, cropRadius,
-								 cropRadius);
+		return new WritableImage(reader, (imgWidth - cropRadius) / 2, (imgHeight - cropRadius) / 2, cropRadius, cropRadius);
 	}
 
 	private Color getAvgColor(Image image) {

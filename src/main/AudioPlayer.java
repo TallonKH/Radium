@@ -81,10 +81,10 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private WatchService audioDirWatcher;
 	//data
 	private List<String> songList = new ArrayList<>();
-	private Deque<String> playedSongs = new ArrayDeque<>();
+	private ArrayList<Short> playedSongs; // initialized in config
 	private WordTrie songTree = new WordTrie();
 	private String[] currentSongInfo = {"No Song Playing", "", "", ""}; //name, youtube id, url
-	private String lastSong;
+	private short lastSongIndex;
 	private Map<String, String> directImgMatches = new HashMap<>();
 	private Map<String, String> folderImgMatches = new HashMap<>();
 	private Map<Pattern, String> regexImgMatches = new LinkedHashMap<>();
@@ -105,7 +105,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private boolean ctrlDown;
 	//changable settings
 	private float updateInterval = 0.016666667f; // update interval for audiospectrum analyzer
-	private int songStackSize = 5; // number of songs to keep the the rewind queue
+	private int songStackSize = 5; // number of songs to keep the the rewind stack
 	//player
 	private MediaPlayer mediaPlayer;
 	private Media song;
@@ -137,6 +137,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 													   Color.web("FF4500"), Color.web("008000"), Color.web("800000"));
 			private Color felt = Color.web("32CD3200");
 			private Random random = new Random();
+
 			@Override
 			public void initialize(int barCount, List<Pair<Color, Integer>> imagePalette) {
 
@@ -201,7 +202,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 
 			@Override
 			public Paint getBar(int barIndex, float loudness) {
-				return TColorsFX.colorLerp(Color.BLACK, Color.DARKRED, loudness*3, TMath.LoopModes.BOUNCE);
+				return TColorsFX.colorLerp(Color.BLACK, Color.DARKRED, loudness * 3, TMath.LoopModes.BOUNCE);
 			}
 		});
 	}
@@ -763,12 +764,15 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		leftButton.addEventHandler(MouseEvent.MOUSE_EXITED, (e) -> leftButton.setOpacity(0));
 		leftButton.addEventHandler(MouseEvent.MOUSE_CLICKED, (e) -> {
 			if (e.getButton().equals(MouseButton.PRIMARY)) {
-				String prev = playedSongs.pollLast();
-				if (prev != null) {
-					playSong(prev);
-				}
+				prevSong();
 			}
 		});
+	}
+
+	public void prevSong() {
+		if (!playedSongs.isEmpty()) {
+			playSong(playedSongs.remove(playedSongs.size() - 1), false);
+		}
 	}
 
 	public static void main(String args[]) {
@@ -858,11 +862,11 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 				List<StrNumPair> search = songTree.search(term);
 				print(search);
 				if (search.size() > 0) {
-					if (lastSong != null) {
-						playedSongs.addLast(lastSong);
+					if (lastSongIndex > -1) {
+						playedSongs.add(lastSongIndex);
 					}
 					StrNumPair shortest = Collections.min(search, Comparator.comparingInt(a -> a.str.length()));
-					playSong(songList.get(shortest.num));
+					playSong(shortest.num, true);
 				}
 			}
 		});
@@ -894,7 +898,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 				}
 			});
 			popup.add(openFolder);
-			trayIcon = new TrayIcon(iconImg, "THAudioPlayer", popup);
+			trayIcon = new TrayIcon(iconImg, "Radium", popup);
 			try {
 				tray.add(trayIcon);
 			} catch (AWTException e) {
@@ -1064,7 +1068,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			double cos = Math.cos(rads);
 			double len = 200 + mag;
 			float alpha = (float) TMath.clamp(mag / 100, 0, 1);
-			avgLoudness+=alpha;
+			avgLoudness += alpha;
 			if (barColorer == null) {
 				if (barColorMode.equals(ColorSourceMode.PALETTE_ALL)) {
 					if (palette != null && !palette.isEmpty()) {
@@ -1126,13 +1130,20 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		arc.setLength(Math.toDegrees(radians));
 	}
 
-	private void playSong(String name) {
+	private void playSong(short index, boolean affectStack) {
 		song = null;
 		if (mediaPlayer != null) {
 			mediaPlayer.stop();
 			mediaPlayer.dispose();
 			mediaPlayer.setAudioSpectrumListener(null);
 			mediaPlayer = null;
+		}
+
+		if (affectStack) {
+			if (playedSongs.size() >= songStackSize) {
+				playedSongs.remove(0);
+			}
+			playedSongs.add(index);
 		}
 
 		WatchKey fileChange = audioDirWatcher.poll();
@@ -1153,8 +1164,8 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 								node.setNum((short) (node.getNum() - 1));
 							}
 						});
-						// this should only work if something were to forcefully delete a song while it's in the queue
-						playedSongs.remove(songList.remove(search.intValue()));
+						// this should only work if something were to forcefully delete a song while it's in the stack
+						playedSongs.remove(search);
 					} else if (e.kind().equals(ENTRY_CREATE)) {
 						print("New song located: " + watchedSongInfo[0]);
 						songTree.addValue(simplifiedName, (short) songList.size());
@@ -1167,14 +1178,14 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			fileChange.reset();
 		}
 
-		song = new Media(audioFolderUrl + name);
+		song = new Media(audioFolderUrl + songList.get(index));
 		mediaPlayer = new MediaPlayer(song);
 		mediaPlayer.setAudioSpectrumNumBands(bandCount * 2);
 		mediaPlayer.setAudioSpectrumListener(this);
 		mediaPlayer.setAudioSpectrumInterval(updateInterval);
 		mediaPlayer.setOnEndOfMedia(() -> {
 			if (looping) {
-				playSong(name);
+				playSong(index, false);
 			} else {
 				nextSong();
 			}
@@ -1257,18 +1268,31 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			updateColorPalette();
 		}
 
-		lastSong = name;
+		lastSongIndex = index;
 	}
 
 	private void nextSong() {
-		if (playedSongs.size() >= songStackSize) {
-			playedSongs.removeFirst();
+		short next = (short) random.nextInt(songList.size());
+		if (playedSongs.contains(next)) {
+			int currentStackSize = playedSongs.size();
+
+			if (songList.size() > (currentStackSize * 2)) {
+				// if the stack is relatively short, keep guessing randomly until an unplayed song is found
+				do {
+					next = (short) random.nextInt(songList.size());
+				} while (playedSongs.contains(next));
+			} else if (songList.size() > currentStackSize) {
+				// if the stack is relatively long, search linearly until an unplayed song is found
+				do {
+					next++;
+				} while (playedSongs.contains(next));
+			} else if (currentStackSize >= 2) {
+				// if the stack is longer than or equal in size to the list of songs, give up and play one from the least recent half
+				next = playedSongs.get(random.nextInt(currentStackSize) / 2);
+			}
+
 		}
-		String name = songList.get(random.nextInt(songList.size()));
-		if (lastSong != null) {
-			playedSongs.addLast(lastSong);
-		}
-		playSong(name);
+		playSong(next, true);
 	}
 
 	private void recursiveSongGrab(File directory, List<String> list) {
@@ -1295,6 +1319,9 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 				songTree.addValue(s, index);
 			}
 			index++;
+		}
+		if (songList.size() > Short.MAX_VALUE) {
+			print("ERROR: Number of songs exceeds limit (" + Short.MAX_VALUE + ')');
 		}
 		print(songList.size() + " audio clips found");
 	}
@@ -1324,14 +1351,14 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			imageFolderUrl = fileToUrl(imageFolderPath);
 
 			print("Grabbing images from " + imageFolderPath);
-
 			songStackSize = Integer.parseInt(config.getOrDefault("StackSize", "5"));
+			playedSongs = new ArrayList<>(songStackSize);
 			setDefaultBaseColor(Color.web(config.getOrDefault("BaseColor", "#F8F8F8")));
 			setDefaultBarColor(Color.web(config.getOrDefault("BarColor", "#FFFFFFCC")));
 			setUseDynamicBarOpacity(config.getOrDefault("DynamicOpacity", "true").equals("true"));
 			setColorDiffThreshold(Double.parseDouble(config.getOrDefault("ColorDiffThreshold", "0.4")));
 			setColorFreqThreshold(Double.parseDouble(config.getOrDefault("ColorFreqThreshold", "4")));
-			setBarCount(Integer.parseInt(config.getOrDefault("BardCount", "128")));
+			setBarCount(Integer.parseInt(config.getOrDefault("BarCount", "128")));
 			setBarColorMode(ColorSourceMode.valueOf(config.getOrDefault("BarColorMode", "PALETTE_ALL")));
 
 		} catch (FileNotFoundException e) {

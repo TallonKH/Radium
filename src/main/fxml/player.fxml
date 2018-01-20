@@ -38,7 +38,7 @@
         <Image url="@../resources/skipforward.png"/>
     </ImageView>
     <ImageView fx:id="centerButton" fitHeight="200.0" fitWidth="200.0" opacity="0.0" preserveRatio="true">
-        <Image url="@../resources/play.png"/>
+        <Image url="@../resources/pause.png"/>
     </ImageView>
     <Group autoSizeChildren="false" mouseTransparent="true">
         <Rectangle arcHeight="5.0" arcWidth="5.0" fill="TRANSPARENT" height="364.8" layoutX="-182.4"

@@ -1,6 +1,7 @@
 package main;
 
 import javafx.application.*;
+import javafx.beans.value.*;
 import javafx.fxml.*;
 import javafx.geometry.*;
 import javafx.scene.*;
@@ -83,8 +84,10 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private List<String> songList = new ArrayList<>();
 	private ArrayList<Short> playedSongs; // initialized in config
 	private WordTrie songTree = new WordTrie();
-	private String[] currentSongInfo = {"No Song Playing", "", "", ""}; //name, youtube id, url
-	private short lastSongIndex;
+	private String[] currentSongInfo = {"Radium", "", "", ""}; //name, youtube id, url
+	private short prevSongIndex;
+	private short currentSongIndex;
+	private boolean addPrevToStack;
 	private Map<String, String> directImgMatches = new HashMap<>();
 	private Map<String, String> folderImgMatches = new HashMap<>();
 	private Map<Pattern, String> regexImgMatches = new LinkedHashMap<>();
@@ -129,7 +132,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private double colorFreqThreshold = 3;
 	private List<Pair<Color, Integer>> palette = Collections.singletonList(new Pair<>(defaultBaseColor, 1));
 	private boolean useDynamicBarOpacity = true;
-	Map<String, DynamicColorer> colorers = new HashMap<>();
+	private Map<String, DynamicColorer> colorers = new HashMap<>();
 
 	{
 		colorers.put("ENGLISH", new DynamicColorer() {
@@ -716,6 +719,10 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		}
 	}
 
+	public static void main(String args[]) {
+		launch(args);
+	}
+
 	@FXML
 	public void initialize() {
 		canvasCenterX = (int) (canvas.getWidth() / 2);
@@ -756,7 +763,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		rightButton.addEventHandler(MouseEvent.MOUSE_EXITED, (e) -> rightButton.setOpacity(0));
 		rightButton.addEventHandler(MouseEvent.MOUSE_CLICKED, (e) -> {
 			if (e.getButton().equals(MouseButton.PRIMARY)) {
-				nextSong();
+				playNextSong();
 			}
 		});
 
@@ -764,19 +771,9 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		leftButton.addEventHandler(MouseEvent.MOUSE_EXITED, (e) -> leftButton.setOpacity(0));
 		leftButton.addEventHandler(MouseEvent.MOUSE_CLICKED, (e) -> {
 			if (e.getButton().equals(MouseButton.PRIMARY)) {
-				prevSong();
+				playPrevSong();
 			}
 		});
-	}
-
-	public void prevSong() {
-		if (!playedSongs.isEmpty()) {
-			playSong(playedSongs.remove(playedSongs.size() - 1), false);
-		}
-	}
-
-	public static void main(String args[]) {
-		launch(args);
 	}
 
 	@Override
@@ -833,6 +830,17 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			}
 		});
 
+		mainStage.focusedProperty().addListener((value, t, t1) -> {
+			if(t1) {
+				altDown = false;
+				if (paused) {
+					centerButton.setImage(new Image(getClass().getResourceAsStream("resources/play.png")));
+				} else {
+					centerButton.setImage(new Image(getClass().getResourceAsStream("resources/pause.png")));
+				}
+			}
+		});
+
 		//move to center
 		Rectangle2D screenBounds = Screen.getPrimary().getBounds();
 		centerX = (float) (screenBounds.getWidth() / 2);
@@ -862,8 +870,8 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 				List<StrNumPair> search = songTree.search(term);
 				print(search);
 				if (search.size() > 0) {
-					if (lastSongIndex > -1) {
-						playedSongs.add(lastSongIndex);
+					if (prevSongIndex > -1) {
+						playedSongs.add(prevSongIndex);
 					}
 					StrNumPair shortest = Collections.min(search, Comparator.comparingInt(a -> a.str.length()));
 					playSong(shortest.num, true);
@@ -904,6 +912,12 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			} catch (AWTException e) {
 				e.printStackTrace();
 			}
+		}
+	}
+
+	private void playPrevSong() {
+		if (!playedSongs.isEmpty()) {
+			playSong(playedSongs.remove(playedSongs.size() - 1), false);
 		}
 	}
 
@@ -1131,6 +1145,16 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	}
 
 	private void playSong(short index, boolean affectStack) {
+		prevSongIndex = currentSongIndex;
+		if (addPrevToStack) {
+			if (playedSongs.size() >= songStackSize) {
+				playedSongs.remove(0);
+			}
+			playedSongs.add(prevSongIndex);
+		}
+		addPrevToStack = affectStack;
+		currentSongIndex = index;
+
 		song = null;
 		if (mediaPlayer != null) {
 			mediaPlayer.stop();
@@ -1139,44 +1163,8 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			mediaPlayer = null;
 		}
 
-		if (affectStack) {
-			if (playedSongs.size() >= songStackSize) {
-				playedSongs.remove(0);
-			}
-			playedSongs.add(index);
-		}
 
-		WatchKey fileChange = audioDirWatcher.poll();
-		if (fileChange != null) {
-			for (WatchEvent e : fileChange.pollEvents()) {
-				String[] watchedSongInfo = getSongInfo(e.context().toString());
-				String simplifiedName = simplifySongName(watchedSongInfo[0]);
-				if (acceptedAudioTypes.contains(getExtension(e.context().toString()))) {
-					if (e.kind().equals(ENTRY_DELETE)) {
-						Short search = songTree.remove(simplifiedName);
-						print("Song " + watchedSongInfo[0] + " has been removed from the audio directory");
-						if (search == null) {
-							print("ERROR: song " + e.context() + " should exist in trie, but cannot be found");
-							continue;
-						}
-						songTree.traverse((node) -> {
-							if (node.getNum() > search) {
-								node.setNum((short) (node.getNum() - 1));
-							}
-						});
-						// this should only work if something were to forcefully delete a song while it's in the stack
-						playedSongs.remove(search);
-					} else if (e.kind().equals(ENTRY_CREATE)) {
-						print("New song located: " + watchedSongInfo[0]);
-						songTree.addValue(simplifiedName, (short) songList.size());
-						songList.add(e.context().toString());
-					} else if (e.kind().equals(ENTRY_MODIFY)) {
-						print("File Modified: " + e.context());
-					}
-				}
-			}
-			fileChange.reset();
-		}
+		checkSongFolder();
 
 		song = new Media(audioFolderUrl + songList.get(index));
 		mediaPlayer = new MediaPlayer(song);
@@ -1187,7 +1175,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			if (looping) {
 				playSong(index, false);
 			} else {
-				nextSong();
+				playNextSong();
 			}
 		});
 
@@ -1268,10 +1256,45 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			updateColorPalette();
 		}
 
-		lastSongIndex = index;
+		prevSongIndex = index;
 	}
 
-	private void nextSong() {
+	private void checkSongFolder(){
+		WatchKey fileChange = audioDirWatcher.poll();
+		if (fileChange != null) {
+			for (WatchEvent e : fileChange.pollEvents()) {
+				String[] watchedSongInfo = getSongInfo(e.context().toString());
+				String simplifiedName = simplifySongName(watchedSongInfo[0]);
+				if (acceptedAudioTypes.contains(getExtension(e.context().toString()))) {
+					if (e.kind().equals(ENTRY_DELETE)) {
+						Short search = songTree.remove(simplifiedName);
+						print("Song " + watchedSongInfo[0] + " has been removed from the audio directory");
+						if (search == null) {
+							print("ERROR: song " + e.context() + " should exist in trie, but cannot be found");
+							continue;
+						}
+						songList.remove(search.shortValue());
+						songTree.traverse((node) -> {
+							if (node.getNum() > search) {
+								node.setNum((short) (node.getNum() - 1));
+							}
+						});
+						// this should only work if something were to forcefully delete a song while it's in the stack
+						playedSongs.remove(search);
+					} else if (e.kind().equals(ENTRY_CREATE)) {
+						print("New song located: " + watchedSongInfo[0]);
+						songTree.addValue(simplifiedName, (short) songList.size());
+						songList.add(e.context().toString());
+					} else if (e.kind().equals(ENTRY_MODIFY)) {
+						print("File Modified: " + e.context());
+					}
+				}
+			}
+			fileChange.reset();
+		}
+	}
+
+	private void playNextSong() {
 		short next = (short) random.nextInt(songList.size());
 		if (playedSongs.contains(next)) {
 			int currentStackSize = playedSongs.size();
@@ -1624,7 +1647,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 				mediaPlayer.seek(Duration.millis(song.getDuration().toMillis() * lastDragAngle / TAU));
 			} else {
 				//if seeker is basically at end, next song
-				nextSong();
+				playNextSong();
 			}
 			if (!paused) {
 				mediaPlayer.play();

@@ -87,7 +87,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private String[] currentSongInfo = {"Radium", "", "", ""}; //name, youtube id, url
 	private short prevSongIndex;
 	private short currentSongIndex;
-	private boolean addPrevToStack;
+//	private boolean addPrevToStack;
 	private Map<String, String> directImgMatches = new HashMap<>();
 	private Map<String, String> folderImgMatches = new HashMap<>();
 	private Map<Pattern, String> regexImgMatches = new LinkedHashMap<>();
@@ -831,7 +831,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		});
 
 		mainStage.focusedProperty().addListener((value, t, t1) -> {
-			if(t1) {
+			if (t1) {
 				altDown = false;
 				if (paused) {
 					centerButton.setImage(new Image(getClass().getResourceAsStream("resources/play.png")));
@@ -870,9 +870,6 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 				List<StrNumPair> search = songTree.search(term);
 				print(search);
 				if (search.size() > 0) {
-					if (prevSongIndex > -1) {
-						playedSongs.add(prevSongIndex);
-					}
 					StrNumPair shortest = Collections.min(search, Comparator.comparingInt(a -> a.str.length()));
 					playSong(shortest.num, true);
 				}
@@ -1146,13 +1143,13 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 
 	private void playSong(short index, boolean affectStack) {
 		prevSongIndex = currentSongIndex;
-		if (addPrevToStack) {
+		if (affectStack) {
 			if (playedSongs.size() >= songStackSize) {
 				playedSongs.remove(0);
 			}
 			playedSongs.add(prevSongIndex);
 		}
-		addPrevToStack = affectStack;
+//		addPrevToStack = affectStack;
 		currentSongIndex = index;
 
 		song = null;
@@ -1259,7 +1256,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		prevSongIndex = index;
 	}
 
-	private void checkSongFolder(){
+	private void checkSongFolder() {
 		WatchKey fileChange = audioDirWatcher.poll();
 		if (fileChange != null) {
 			for (WatchEvent e : fileChange.pollEvents()) {

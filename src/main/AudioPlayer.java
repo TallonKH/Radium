@@ -1293,7 +1293,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 
 	private void playNextSong() {
 		short next = (short) random.nextInt(songList.size());
-		if (playedSongs.contains(next)) {
+		if (currentSongIndex == next || playedSongs.contains(next)) {
 			int currentStackSize = playedSongs.size();
 
 			if (songList.size() > (currentStackSize * 2)) {

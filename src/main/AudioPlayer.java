@@ -1,7 +1,6 @@
 package main;
 
 import javafx.application.*;
-import javafx.beans.value.*;
 import javafx.fxml.*;
 import javafx.geometry.*;
 import javafx.scene.*;
@@ -18,7 +17,6 @@ import javafx.scene.paint.Paint;
 import javafx.scene.shape.*;
 import javafx.stage.*;
 import javafx.util.*;
-import main.AudioPlayer.WordTrie.*;
 import org.apache.commons.math3.analysis.interpolation.*;
 import org.apache.commons.math3.analysis.polynomials.*;
 import tMethods.*;
@@ -32,7 +30,6 @@ import java.nio.file.*;
 import java.nio.file.Path;
 import java.util.*;
 import java.util.List;
-import java.util.function.*;
 import java.util.regex.*;
 
 import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
@@ -81,13 +78,12 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private String audioFolderUrl;
 	private WatchService audioDirWatcher;
 	//data
-	private List<String> songList = new ArrayList<>();
-	private ArrayList<Short> playedSongs; // initialized in config
-	private WordTrie songTree = new WordTrie();
+	private List<StringPair> audioList = new ArrayList<>(); // list of song names/urls, sorted by name size
+	private ArrayList<Integer> playedSongs; // initialized in config
 	private String[] currentSongInfo = {"Radium", "", "", ""}; //name, youtube id, url
-	private short prevSongIndex;
-	private short currentSongIndex;
-//	private boolean addPrevToStack;
+	private int prevSongIndex;
+	private int currentSongIndex;
+	//	private boolean addPrevToStack;
 	private Map<String, String> directImgMatches = new HashMap<>();
 	private Map<String, String> folderImgMatches = new HashMap<>();
 	private Map<Pattern, String> regexImgMatches = new LinkedHashMap<>();
@@ -210,10 +206,37 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		});
 	}
 
-	private DynamicColorer barColorer = null;//colorers.get("PORTAL");
+	private DynamicColorer barColorer = null;//colorers.get("DARK");
 
 	public enum ColorSourceMode {
 		PALETTE_FIRST, PALETTE_ALL, DEFAULT
+	}
+
+	/**
+	 * It's just a pair of Strings.
+	 **/
+	public static class StringPair {
+		public final String strA;
+		public final String strB;
+
+		public StringPair(String a, String b) {
+			strA = a;
+			strB = b;
+		}
+
+		@Override
+		public boolean equals(Object o) {
+			if (!o.getClass().equals(this.getClass())) {
+				return false;
+			}
+			StringPair other = (StringPair) o;
+			return other.strA.equals(strA) && other.strB.equals(strB);
+		}
+
+		@Override
+		public int hashCode() {
+			return strA.hashCode() ^ strB.hashCode();
+		}
 	}
 
 	public interface DynamicColorer {
@@ -224,499 +247,6 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		Paint getBar(int barIndex, float loudness);
 
 		Paint getBase(float loudness);
-	}
-
-	public static class WordTrie {
-		private static class LetterData {
-			byte byt;
-
-			private LetterData(char ch) {
-				byt = (byte) ch;
-			}
-
-			@Override
-			public int hashCode() {
-				return byt;
-			}
-
-			@SuppressWarnings("EqualsWhichDoesntCheckParameterClass")
-			@Override
-			public boolean equals(Object o) {
-				return o.hashCode() == hashCode();
-			}
-		}
-
-		private static class StrNumPair {
-			public final String str;
-			public short num;
-
-			public StrNumPair(String str, short num) {
-				this.str = str;
-				this.num = num;
-			}
-
-			@Override
-			public String toString() {
-				return str + " : " + num;
-			}
-
-		}
-
-		public interface TrieNode {
-
-			String getValue();
-
-			short getNum();
-
-			void setNum(short num);
-
-			boolean isValue();
-
-			void traverse(Consumer<TrieNode> action);
-
-			void print(int depth);
-
-			List<StrNumPair> search(String term, String prev, boolean exact);
-
-			List<StrNumPair> collect(String prev);
-
-		}
-
-		public static class LeafNode implements TrieNode {
-			private String value;
-
-			private short num;
-
-			private LeafNode(String value, short num) {
-				this.value = value;
-				this.num = num;
-			}
-
-			@Override
-			public String getValue() {
-				return value;
-			}
-
-			@Override
-			public short getNum() {
-				return num;
-			}
-
-			@Override
-			public void setNum(short num) {
-				this.num = num;
-			}
-
-			@Override
-			public boolean isValue() {
-				return true;
-			}
-
-			@Override
-			public void traverse(Consumer<TrieNode> action) {
-				action.accept(this);
-			}
-
-			@Override
-			public void print(int depth) {
-				StringBuilder builder = new StringBuilder(depth);
-				for (int i = 0; i < depth; i++) {
-					builder.append("-=");
-				}
-				builder.append(value);
-				System.out.println(builder.toString());
-			}
-
-			@Override
-			public List<StrNumPair> search(String term, String prev, boolean exact) {
-				return (exact ? getValue().equals(term) : getValue().startsWith(term)) ?
-					   Collections.singletonList(new StrNumPair(prev + value, num)) :
-					   Collections.emptyList();
-			}
-
-			@Override
-			public List<StrNumPair> collect(String prev) {
-				return Collections.singletonList(new StrNumPair(prev + value, num));
-			}
-
-		}
-
-		public static class BranchNode extends HashMap<LetterData, TrieNode> implements TrieNode {
-			private String value;
-			private boolean isValue;
-
-			private short num;
-
-			private BranchNode(String value, boolean isValue, short num) {
-				this.value = value;
-				this.isValue = isValue;
-				this.num = num;
-			}
-
-			public void setIsValue(boolean is) {
-				isValue = is;
-			}
-
-			@Override
-			public short getNum() {
-				return num;
-			}
-
-			@Override
-			public void setNum(short num) {
-				this.num = num;
-			}
-
-			@Override
-			public void traverse(Consumer<TrieNode> action) {
-				action.accept(this);
-				for (TrieNode child : this.values()) {
-					child.traverse(action);
-				}
-			}
-
-			/**
-			 * returns a list of full values of child nodes, filtered by a search term
-			 */
-			public List<StrNumPair> search(String term, String prev, boolean exact) {
-				List<StrNumPair> returns = new ArrayList<>();
-				String combined = prev + value;
-
-				if (term.length() > value.length()) {
-					if (term.startsWith(value)) {
-						for (TrieNode child : super.values()) {
-							returns.addAll(child.search(term.substring(value.length()), combined, exact));
-						}
-					}
-				} else {
-					if (exact) {
-						return term.equals(value) ? Collections.singletonList(new StrNumPair(value, num)) : Collections.emptyList();
-					} else {
-						if (value.startsWith(term)) {
-							if (isValue) {
-								returns.add(new StrNumPair(combined, num));
-							}
-							returns.addAll(collect(prev));
-						}
-					}
-				}
-				return returns;
-			}
-
-			/**
-			 * returns a list of full values of child nodes, unfiltered
-			 */
-			public List<StrNumPair> collect(String prev) {
-				List<StrNumPair> returns = new ArrayList<>();
-				String combined = prev + value;
-				if (isValue) {
-					returns.add(new StrNumPair(combined, num));
-				}
-
-				for (TrieNode child : super.values()) {
-					returns.addAll(child.collect(combined));
-				}
-				return returns;
-			}
-
-			@Override
-			public String getValue() {
-				return value;
-			}
-
-			@Override
-			public boolean isValue() {
-				return isValue;
-			}
-
-			@Override
-			public void print(int depth) {
-				StringBuilder builder = new StringBuilder(depth);
-				for (int i = 0; i < depth; i++) {
-					builder.append("-/");
-				}
-				if (!isValue) {
-					builder.append('*');
-				}
-				builder.append(value);
-				System.out.println(builder.toString());
-				for (TrieNode child : super.values()) {
-					child.print(depth + 1);
-				}
-			}
-
-		}
-
-		private Map<LetterData, TrieNode> roots = new HashMap<>();
-
-		public void print() {
-			for (TrieNode node : roots.values()) {
-				node.print(0);
-			}
-		}
-
-		public void traverse(Consumer<TrieNode> action) {
-			for (TrieNode node : roots.values()) {
-				node.traverse(action);
-			}
-		}
-
-		public Short remove(String val) {
-			String initialVal = val;
-			if (val.length() == 0) {
-				return null;
-			}
-
-			LetterData firstLetter = new LetterData(val.charAt(0));
-			TrieNode root = roots.get(firstLetter);
-			BranchNode prevRoot = null;
-			if (root == null) {
-				return null;
-			} else {
-				while (true) {
-					String rootVal = root.getValue();
-
-					if (root.getClass().equals(LeafNode.class)) {
-						if (root.getValue().equals(val)) {
-							if (prevRoot == null) {
-								roots.remove(firstLetter);
-							} else {
-								prevRoot.remove(new LetterData(val.charAt(0)));
-								// leave root alone, even if it becomes a useless empty branch - too difficult to remove recursively backwards
-							}
-							return root.getNum();
-						} else {
-							return null;
-						}
-					} else { // rootnode is branch
-						BranchNode rootAsBranch = (BranchNode) root;
-						if (rootVal.length() > val.length()) {
-							return null;
-						}
-						if (rootVal.length() < val.length()) {
-							prevRoot = rootAsBranch;
-							val = val.substring(rootVal.length());
-							root = rootAsBranch.get(new LetterData(val.charAt(0)));
-							if (root == null) {
-								return null;
-							}
-							continue;
-						}
-						if (root.isValue() && rootVal.equals(val)) {
-							if (prevRoot == null) {
-								roots.remove(firstLetter);
-							} else {
-								prevRoot.remove(new LetterData(val.charAt(0)));
-							}
-							for (StrNumPair pair : root.collect(initialVal.substring(0, initialVal.length() - val.length()))) {
-								this.addValue(pair.str, pair.num);
-							}
-							return root.getNum();
-						}
-						return null;
-					}
-				}
-			}
-		}
-
-		public Short getValue(String term) {
-			StrNumPair search = searchHelper(term, true).get(0);
-			return search == null ? null : search.num;
-		}
-
-		public List<StrNumPair> search(String term) {
-			return searchHelper(term, false);
-		}
-
-		private List<StrNumPair> searchHelper(String term, boolean exact) {
-			if (term.length() == 0) {
-				List<StrNumPair> all = new ArrayList<>();
-				for (TrieNode node : roots.values()) {
-					all.addAll(node.collect(""));
-				}
-				return all;
-			}
-			TrieNode root = roots.get(new LetterData(term.charAt(0)));
-			if (root == null) {
-				return new ArrayList<>();
-			}
-			return root.search(term, "", exact);
-		}
-
-		private TrieNode addValue(String val, short num) {
-			LetterData firstLetter = new LetterData(val.charAt(0));
-			TrieNode root = roots.get(firstLetter);
-			BranchNode prevRoot = null;
-			if (root == null) {
-//				System.out.println("Added leaf as root node: " + val);
-				TrieNode node = new LeafNode(val, num);
-				roots.put(firstLetter, node);
-				return node;
-			} else {
-				int charIndex = 0; //char index when scanning through val
-				int prevIndex; //char index on last cycle
-				int rootCharIndex; //char index of the current root's value
-				int breakCause; //char index of the current root's value
-				while (true) {
-					prevIndex = charIndex;
-					rootCharIndex = 0;
-					String rootVal = root.getValue();
-
-					if (root.getClass().equals(LeafNode.class)) {
-						breakCause = 2;
-						while (true) {
-							boolean endV = charIndex == val.length();
-							boolean endRV = rootCharIndex == rootVal.length();
-
-							if (endRV && endV) {
-								charIndex--;
-								rootCharIndex--;
-								break; // case 2
-							}
-
-							if (endRV) {
-								breakCause = 0;
-								break;
-							}
-
-							if (endV) {
-								breakCause = 1;
-								break;
-							}
-
-							if (val.charAt(charIndex) != rootVal.charAt(rootCharIndex)) {
-								break; // case 2
-							}
-							charIndex++;
-							rootCharIndex++;
-						}
-						switch (breakCause) {
-							case 0: {//reached end of rootVal
-//								System.out.println("Reached end of leaf " + rootVal + "; adding new " + val);
-								LeafNode node = new LeafNode(val.substring(charIndex), num);
-								BranchNode newRoot = new BranchNode(rootVal, true, root.getNum());
-								newRoot.put(new LetterData(val.charAt(charIndex)), node);
-								if (prevRoot == null) {
-									roots.put(firstLetter, newRoot);
-								} else {
-									prevRoot.put(new LetterData(rootVal.charAt(0)), newRoot);
-								}
-								return node;
-							}
-							case 1: {//reached end of val
-//								System.out.println("Reached end of new " + val + "; adding leaf " + rootVal);
-								BranchNode newRoot = new BranchNode(val.substring(prevIndex), true, num);
-								newRoot.put(new LetterData(rootVal.charAt(rootCharIndex)), new LeafNode(rootVal.substring(rootCharIndex), root.getNum()));
-								if (prevRoot == null) {
-									roots.put(firstLetter, newRoot);
-								} else {
-									prevRoot.put(new LetterData(val.charAt(prevIndex)), newRoot);
-								}
-								return newRoot;
-							}
-							case 2: {//found different character
-								String commonStr = rootVal.substring(0, rootCharIndex);
-//								System.out.println("Split leaf " + rootVal + " at " + commonStr + " adding new " + val);
-								BranchNode newRoot = new BranchNode(commonStr, false, (short) -1);
-								LeafNode node = new LeafNode(val.substring(charIndex), num);
-								newRoot.put(new LetterData(val.charAt(charIndex)), node);
-								newRoot.put(new LetterData(rootVal.charAt(rootCharIndex)), new LeafNode(rootVal.substring(rootCharIndex), root.getNum()));
-								if (prevRoot == null) {
-									roots.put(firstLetter, newRoot);
-								} else {
-									prevRoot.put(new LetterData(rootVal.charAt(0)), newRoot);
-								}
-								return node;
-							}
-						}
-					} else { // rootnode is branch
-						BranchNode rootAsBranch = (BranchNode) root;
-						breakCause = 2;
-						if (!root.isValue() && rootVal.equals(val.substring(charIndex))) {
-//							System.out.println("Replacing with val branch: " + val);
-							rootAsBranch.setIsValue(true);
-							return rootAsBranch;
-						}
-						while (true) {
-							boolean endV = charIndex == val.length();
-							boolean endRV = rootCharIndex == rootVal.length();
-							if (endRV && endV) {
-								charIndex--;
-								rootCharIndex--;
-								break; // case 2
-							}
-
-							if (endRV) {
-								breakCause = 0;
-								break;
-							}
-
-							if (endV) {
-								breakCause = 1;
-								break;
-							}
-
-							if (rootVal.charAt(rootCharIndex) != val.charAt(charIndex)) {
-								break; // case 2
-							}
-							charIndex++;
-							rootCharIndex++;
-						}
-						switch (breakCause) {
-							case 0: {//end of rootval
-								LetterData nextLetter = new LetterData(val.charAt(charIndex));
-								TrieNode nextRoot = rootAsBranch.get(nextLetter);
-								if (nextRoot == null) {
-//									System.out.println("Reached end of branch " + rootVal + "; adding new " + val);
-									LeafNode node = new LeafNode(val.substring(charIndex), num);
-									rootAsBranch.put(nextLetter, node);
-									return node;
-								} else {
-//									System.out.println("Moving from branch " + rootVal + " to " + nextRoot.getValue() + " when trying " + val);
-									prevRoot = rootAsBranch;
-									root = nextRoot;
-								}
-								break;
-							}
-							case 1: {//end of val
-//								System.out.println("Reached end of new " + val + " on branch " + rootVal);
-								LetterData nextLetter = new LetterData(rootVal.charAt(rootCharIndex));
-								BranchNode newRoot = new BranchNode(val.substring(prevIndex), true, num);
-								BranchNode newBranch = new BranchNode(rootVal.substring(rootCharIndex), root.isValue(), root.getNum());
-								newBranch.putAll(rootAsBranch);
-								newRoot.put(nextLetter, newBranch);
-
-								if (prevRoot == null) {
-									roots.put(firstLetter, newRoot);
-								} else {
-									prevRoot.put(new LetterData(val.charAt(prevIndex)), newRoot);
-								}
-								return newRoot;
-							}
-							case 2: {
-								String commonStr = val.substring(prevIndex, charIndex);
-								BranchNode newRoot = new BranchNode(commonStr, false, (short) -1);
-
-								LeafNode node = new LeafNode(val.substring(charIndex), num);
-								newRoot.put(new LetterData(val.charAt(charIndex)), node);
-
-								BranchNode newBranch = new BranchNode(rootVal.substring(rootCharIndex), root.isValue(), root.getNum());
-								newBranch.putAll(rootAsBranch);
-								newRoot.put(new LetterData(rootVal.charAt(rootCharIndex)), newBranch);
-
-								if (prevRoot == null) {
-									roots.put(firstLetter, newRoot);
-								} else {
-									prevRoot.put(new LetterData(val.charAt(prevIndex)), newRoot);
-								}
-//								System.out.println("Split branch " + rootVal + " at " + commonStr + " adding new " + val);
-								return node;
-							}
-						}
-					}
-				}
-			}
-		}
 	}
 
 	public static void main(String args[]) {
@@ -730,7 +260,6 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 
 		final Circle clip = new Circle(175, 175, 175);
 		imageView.setClip(clip);
-
 		audioVizContext = canvas.getGraphicsContext2D();
 		audioVizContext.setLineCap(StrokeLineCap.ROUND);
 
@@ -851,7 +380,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		readConfig();
 		Path path = new File(audioFolderPath).toPath();
 		audioDirWatcher = path.getFileSystem().newWatchService();
-		path.register(audioDirWatcher, ENTRY_DELETE, ENTRY_CREATE, ENTRY_MODIFY);
+		path.register(audioDirWatcher, ENTRY_DELETE);
 
 		findSongs();
 		readMatches();
@@ -867,11 +396,23 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			if (term.length() == 0) {
 				songSearchbar.setText(currentSongInfo[0]);
 			} else {
-				List<StrNumPair> search = songTree.search(term);
-				print(search);
-				if (search.size() > 0) {
-					StrNumPair shortest = Collections.min(search, Comparator.comparingInt(a -> a.str.length()));
-					playSong(shortest.num, true);
+				long nano = System.nanoTime();
+				int search = -1;
+				for (int i = 0; i < audioList.size(); i++) {
+					String name = audioList.get(i).strA;
+					System.out.println(name);
+					if (name.startsWith(term)) {
+						search = i;
+						break; // audioList is sorted by length, so stop at the first find
+					}
+					// prioritize prefix searching - don't break if name merely contains term
+					if (search == -1 && name.contains(term)) {
+						search = i;
+					}
+				}
+				System.out.println("Time: " + (System.nanoTime() - nano));
+				if (search >= 0) {
+					playSong(search, true);
 				}
 			}
 		});
@@ -1141,7 +682,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		arc.setLength(Math.toDegrees(radians));
 	}
 
-	private void playSong(short index, boolean affectStack) {
+	private void playSong(int index, boolean affectStack) {
 		prevSongIndex = currentSongIndex;
 		if (affectStack) {
 			if (playedSongs.size() >= songStackSize) {
@@ -1163,7 +704,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 
 		checkSongFolder();
 
-		song = new Media(audioFolderUrl + songList.get(index));
+		song = new Media(audioFolderUrl + audioList.get(index).strB);
 		mediaPlayer = new MediaPlayer(song);
 		mediaPlayer.setAudioSpectrumNumBands(bandCount * 2);
 		mediaPlayer.setAudioSpectrumListener(this);
@@ -1226,7 +767,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 							}
 						} else {
 							try {
-								image = new Image(selected.toURI().toURL().toString());
+								image = new Image(selected.toURI().toURL().toString(), 350, 350, true, false);
 							} catch (MalformedURLException e) {
 								e.printStackTrace();
 							}
@@ -1260,30 +801,31 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		WatchKey fileChange = audioDirWatcher.poll();
 		if (fileChange != null) {
 			for (WatchEvent e : fileChange.pollEvents()) {
-				String[] watchedSongInfo = getSongInfo(e.context().toString());
-				String simplifiedName = simplifySongName(watchedSongInfo[0]);
+				System.out.println(e.context());
 				if (acceptedAudioTypes.contains(getExtension(e.context().toString()))) {
+					String[] songInfo = getSongInfo(e.context().toString());
+					String simplifiedName = simplifySongName(songInfo[0]);
+
 					if (e.kind().equals(ENTRY_DELETE)) {
-						Short search = songTree.remove(simplifiedName);
-						print("Song " + watchedSongInfo[0] + " has been removed from the audio directory");
-						if (search == null) {
-							print("ERROR: song " + e.context() + " should exist in trie, but cannot be found");
-							continue;
-						}
-						songList.remove(search.shortValue());
-						songTree.traverse((node) -> {
-							if (node.getNum() > search) {
-								node.setNum((short) (node.getNum() - 1));
+						for (int i = 0; i < audioList.size(); i++) {
+							if (audioList.get(i).strA.equals(simplifiedName)) {
+								audioList.remove(i);
+								// try to remove deleted song from stack
+								playedSongs.remove(i);
+								// repair indices of songs in stack
+								for (int i2 = 0; i2 < playedSongs.size(); i2++) {
+									if (playedSongs.get(i2) > i) {
+										playedSongs.set(i2, i2 - 1);
+									}
+								}
+								print("Song " + songInfo[0] + " has been removed from the audio directory");
+								break;
 							}
-						});
-						// this should only work if something were to forcefully delete a song while it's in the stack
-						playedSongs.remove(search);
+						}
 					} else if (e.kind().equals(ENTRY_CREATE)) {
-						print("New song located: " + watchedSongInfo[0]);
-						songTree.addValue(simplifiedName, (short) songList.size());
-						songList.add(e.context().toString());
+						// CANNOT CURRENTLY HANDLE NEW FILES
 					} else if (e.kind().equals(ENTRY_MODIFY)) {
-						print("File Modified: " + e.context());
+						// CANNOT CURRENTLY FILE MODIFICATION
 					}
 				}
 			}
@@ -1292,16 +834,16 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	}
 
 	private void playNextSong() {
-		short next = (short) random.nextInt(songList.size());
+		int next = random.nextInt(audioList.size());
 		if (currentSongIndex == next || playedSongs.contains(next)) {
 			int currentStackSize = playedSongs.size();
 
-			if (songList.size() > (currentStackSize * 2)) {
+			if (audioList.size() > (currentStackSize * 2)) {
 				// if the stack is relatively short, keep guessing randomly until an unplayed song is found
 				do {
-					next = (short) random.nextInt(songList.size());
+					next = (short) random.nextInt(audioList.size());
 				} while (playedSongs.contains(next));
-			} else if (songList.size() > currentStackSize) {
+			} else if (audioList.size() > currentStackSize) {
 				// if the stack is relatively long, search linearly until an unplayed song is found
 				do {
 					next++;
@@ -1315,35 +857,24 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		playSong(next, true);
 	}
 
-	private void recursiveSongGrab(File directory, List<String> list) {
+	private void recursiveSongGrab(File directory, List<StringPair> list) {
 		//noinspection ConstantConditions
 		for (File file : directory.listFiles()) {
 			if (file.isDirectory()) {
 				recursiveSongGrab(file, list);
 			} else {
 				if (acceptedAudioTypes.contains(getExtension(file.getName()))) {
-					list.add(file.toURI().toString().substring(this.audioFolderUrl.length()));
+					list.add(new StringPair(simplifySongName(file.getName()), file.toURI().toString().substring(this.audioFolderUrl.length())));
 				}
 			}
 		}
 	}
 
 	private void findSongs() {
-		songList.clear();
-		recursiveSongGrab(new File(audioFolderPath), songList);
-		songTree = new WordTrie();
-		short index = 0;
-		for (String s : songList) {
-			s = simplifySongPath(s);
-			if (s.length() > 0) {
-				songTree.addValue(s, index);
-			}
-			index++;
-		}
-		if (songList.size() > Short.MAX_VALUE) {
-			print("ERROR: Number of songs exceeds limit (" + Short.MAX_VALUE + ')');
-		}
-		print(songList.size() + " audio clips found");
+		audioList.clear();
+		recursiveSongGrab(new File(audioFolderPath), audioList);
+		audioList.sort(Comparator.comparingInt(o -> o.strA.length()));
+		print(audioList.size() + " audio clips found");
 	}
 
 	private void print(Object o) {
@@ -1409,9 +940,11 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private String simplifySongName(String s) {
 		StringBuilder songNameBuilder = new StringBuilder(8);
 		for (char c : s.toCharArray()) {
+			if (c == '@') {
+				break;
+			}
 			if ((c >= 'a' && c <= 'z') ||
-				(c >= '0' && c <= '9') ||
-				(c == ' ')) {
+				(c >= '0' && c <= '9')) {
 				songNameBuilder.append(c);
 			} else if (c >= 'A' && c <= 'Z') {
 				songNameBuilder.append((char) (c | (byte) 0b00100000));

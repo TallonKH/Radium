@@ -32,9 +32,7 @@ import java.util.*;
 import java.util.List;
 import java.util.regex.*;
 
-import static java.nio.file.StandardWatchEventKinds.ENTRY_CREATE;
 import static java.nio.file.StandardWatchEventKinds.ENTRY_DELETE;
-import static java.nio.file.StandardWatchEventKinds.ENTRY_MODIFY;
 
 @SuppressWarnings("FieldCanBeLocal")
 public class AudioPlayer extends Application implements AudioSpectrumListener {
@@ -65,6 +63,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private final static Set<String> acceptedAudioTypes = new HashSet<>(Arrays.asList("mp3", "aif", "aiff", "wav", "fxm", "flv"));
 	private Random random = new Random();
 	//file stuff
+	@SuppressWarnings("UnusedAssignment")
 	private String directoryFile = '/' + getClass().getProtectionDomain().getCodeSource().getLocation().getFile();
 
 	{
@@ -79,9 +78,11 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private WatchService audioDirWatcher;
 	//data
 	private List<StringPair> audioList = new ArrayList<>(); // list of song names/urls, sorted by name size
-	private ArrayList<Integer> playedSongs; // initialized in config
+	private ArrayList<Integer> playedSongs = new ArrayList<>();
+	private ArrayList<Double> playedSongTimes = new ArrayList<>();
 	private String[] currentSongInfo = {"Radium", "", "", ""}; //name, youtube id, url
-	private int prevSongIndex;
+	private int prevSongIndex = -1;
+	private double prevSongTime;
 	private int currentSongIndex;
 	//	private boolean addPrevToStack;
 	private Map<String, String> directImgMatches = new HashMap<>();
@@ -104,7 +105,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private boolean ctrlDown;
 	//changable settings
 	private float updateInterval = 0.016666667f; // update interval for audiospectrum analyzer
-	private int songStackSize = 5; // number of songs to keep the the rewind stack
+	private int songStackCapacity = 5; // number of songs to keep the the rewind stack
 	//player
 	private MediaPlayer mediaPlayer;
 	private Media song;
@@ -132,8 +133,8 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 
 	{
 		colorers.put("ENGLISH", new DynamicColorer() {
-			private List<Color> colors = Arrays.asList(Color.web("FFFF00"), Color.web("0000FF"), Color.web("FF0000"), Color.web("800080"),
-													   Color.web("FF4500"), Color.web("008000"), Color.web("800000"));
+			private List<Color> colors = Arrays.asList(Color.web("FFFF00"), Color.web("0000FF"), Color.web("FF0000"),
+													   Color.web("800080"), Color.web("FF4500"), Color.web("008000"), Color.web("800000"));
 			private Color felt = Color.web("32CD3200");
 			private Random random = new Random();
 
@@ -215,6 +216,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	/**
 	 * It's just a pair of Strings.
 	 **/
+	@SuppressWarnings("WeakerAccess")
 	public static class StringPair {
 		public final String strA;
 		public final String strB;
@@ -313,7 +315,6 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		mainStage.setTitle("THAudioPlayer");
 		mainStage.setOnCloseRequest((o) -> quit());
 		mainStage.show();
-
 		loader = new FXMLLoader(getClass().getResource("fxml/player.fxml"));
 		loader.setController(this);
 		loader.load();
@@ -396,11 +397,9 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			if (term.length() == 0) {
 				songSearchbar.setText(currentSongInfo[0]);
 			} else {
-				long nano = System.nanoTime();
 				int search = -1;
 				for (int i = 0; i < audioList.size(); i++) {
 					String name = audioList.get(i).strA;
-					System.out.println(name);
 					if (name.startsWith(term)) {
 						search = i;
 						break; // audioList is sorted by length, so stop at the first find
@@ -410,7 +409,6 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 						search = i;
 					}
 				}
-				System.out.println("Time: " + (System.nanoTime() - nano));
 				if (search >= 0) {
 					playSong(search, true);
 				}
@@ -435,16 +433,36 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			exitButton.addActionListener(e -> quit());
 			popup.add(exitButton);
 
-			java.awt.MenuItem openFolder = new java.awt.MenuItem("Folder");
-			openFolder.addActionListener(e -> {
+			java.awt.MenuItem rereadConfigButton = new java.awt.MenuItem("Reread Configs");
+			rereadConfigButton.addActionListener(e -> {
+				readConfig();
+				readMatches();
+			});
+			popup.add(rereadConfigButton);
+
+
+			java.awt.MenuItem mainFolderButton = new java.awt.MenuItem("Source Folder");
+			mainFolderButton.addActionListener(e -> {
 				try {
 					Desktop.getDesktop().open(new File(directoryFile));
 				} catch (IOException e1) {
 					e1.printStackTrace();
 				}
 			});
-			popup.add(openFolder);
+			popup.add(mainFolderButton);
+
+			java.awt.MenuItem audioFolderButton = new java.awt.MenuItem("Audio Folder");
+			audioFolderButton.addActionListener(e -> {
+				try {
+					Desktop.getDesktop().open(new File(audioFolderPath));
+				} catch (IOException e1) {
+					e1.printStackTrace();
+				}
+			});
+			popup.add(audioFolderButton);
+
 			trayIcon = new TrayIcon(iconImg, "Radium", popup);
+
 			try {
 				tray.add(trayIcon);
 			} catch (AWTException e) {
@@ -456,6 +474,8 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	private void playPrevSong() {
 		if (!playedSongs.isEmpty()) {
 			playSong(playedSongs.remove(playedSongs.size() - 1), false);
+			double time = playedSongTimes.remove(playedSongTimes.size() - 1);
+			mediaPlayer.setOnReady(() -> mediaPlayer.seek(Duration.seconds(time)));
 		}
 	}
 
@@ -598,7 +618,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 
 		// progress indicators
 		float radians = (float) (mediaPlayer.getCurrentTime().toMillis() / song.getDuration().toMillis()) * TAU;
-		updateArc(radians);
+		changeArc(radians);
 		updateClockDisplay(radians);
 
 		// audio visualizer bands
@@ -675,7 +695,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		return Integer.toString(time);
 	}
 
-	private void updateArc(float radians) {
+	private void changeArc(float radians) {
 		radians *= -1;
 		timePoint.setTranslateX(-Math.sin(radians) * 170);
 		timePoint.setTranslateY(-Math.cos(radians) * 170);
@@ -683,24 +703,30 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 	}
 
 	private void playSong(int index, boolean affectStack) {
-		prevSongIndex = currentSongIndex;
-		if (affectStack) {
-			if (playedSongs.size() >= songStackSize) {
-				playedSongs.remove(0);
-			}
-			playedSongs.add(prevSongIndex);
-		}
-//		addPrevToStack = affectStack;
-		currentSongIndex = index;
-
 		song = null;
 		if (mediaPlayer != null) {
+			double currentTimeSeconds = mediaPlayer.getCurrentTime().toSeconds();
+			if (currentTimeSeconds > 5 && currentTimeSeconds < mediaPlayer.getTotalDuration().toSeconds() - 5) {
+				prevSongTime = currentTimeSeconds;
+			} else {
+				prevSongTime = 0;
+			}
 			mediaPlayer.stop();
 			mediaPlayer.dispose();
 			mediaPlayer.setAudioSpectrumListener(null);
 			mediaPlayer = null;
 		}
 
+		prevSongIndex = currentSongIndex;
+		if (affectStack && prevSongIndex > -1) {
+			if (playedSongs.size() >= songStackCapacity) {
+				playedSongs.remove(0);
+				playedSongTimes.remove(0);
+			}
+			playedSongs.add(prevSongIndex);
+			playedSongTimes.add(prevSongTime);
+		}
+		currentSongIndex = index;
 
 		checkSongFolder();
 
@@ -725,6 +751,12 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		print("Now playing: " + currentSongInfo[0]);
 		songSearchbar.setText(currentSongInfo[0]);
 
+		updateImage();
+
+		prevSongIndex = index;
+	}
+
+	private Image updateImage() {
 		// Try direct match
 		String imgUrl = directImgMatches.get(currentSongInfo[1]);
 
@@ -792,9 +824,9 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		if (image != null && !image.isError()) {
 			imageView.setImage(image);
 			updateColorPalette();
+			return image;
 		}
-
-		prevSongIndex = index;
+		return null;
 	}
 
 	private void checkSongFolder() {
@@ -822,11 +854,12 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 								break;
 							}
 						}
-					} else if (e.kind().equals(ENTRY_CREATE)) {
-						// CANNOT CURRENTLY HANDLE NEW FILES
-					} else if (e.kind().equals(ENTRY_MODIFY)) {
-						// CANNOT CURRENTLY FILE MODIFICATION
 					}
+//					 else if (e.kind().equals(ENTRY_CREATE)) {
+//						// CANNOT CURRENTLY HANDLE NEW FILES
+//					} else if (e.kind().equals(ENTRY_MODIFY)) {
+//						// CANNOT CURRENTLY FILE MODIFICATION
+//					}
 				}
 			}
 			fileChange.reset();
@@ -902,8 +935,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 			imageFolderUrl = fileToUrl(imageFolderPath);
 
 			print("Grabbing images from " + imageFolderPath);
-			songStackSize = Integer.parseInt(config.getOrDefault("StackSize", "5"));
-			playedSongs = new ArrayList<>(songStackSize);
+			songStackCapacity = Integer.parseInt(config.getOrDefault("StackSize", "32"));
 			setDefaultBaseColor(Color.web(config.getOrDefault("BaseColor", "#F8F8F8")));
 			setDefaultBarColor(Color.web(config.getOrDefault("BarColor", "#FFFFFFCC")));
 			setUseDynamicBarOpacity(config.getOrDefault("DynamicOpacity", "true").equals("true"));
@@ -917,24 +949,12 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 		} catch (IOException e) {
 			e.printStackTrace();
 		}
-	}
 
-	private String simplifySongPath(String s) {
-		StringBuilder songNameBuilder = new StringBuilder(16);
-		//noinspection ConstantConditions
-		for (char c : decode(s.substring(Math.max(0, s.lastIndexOf('/')))).toCharArray()) {
-			if (c == '@' || c == '.') {
-				break;
-			}
-			if ((c >= 'a' && c <= 'z') ||
-				(c >= '0' && c <= '9') ||
-				(c == ' ')) {
-				songNameBuilder.append(c);
-			} else if (c >= 'A' && c <= 'Z') {
-				songNameBuilder.append((char) (c | (byte) 0b00100000));
-			}
+		for (int i = songStackCapacity; i < playedSongs.size(); i++) {
+			playedSongs.remove(playedSongs.size() - 1);
+			playedSongTimes.remove(playedSongTimes.size() - 1);
 		}
-		return songNameBuilder.toString();
+		playedSongs.trimToSize();
 	}
 
 	private String simplifySongName(String s) {
@@ -1003,6 +1023,8 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 				print("\t" + err);
 			}
 		}
+
+		updateImage();
 	}
 
 	private void quit() {
@@ -1164,7 +1186,7 @@ public class AudioPlayer extends Application implements AudioSpectrumListener {
 				newDragAngle = newDragAngle < (TAU - 2) ? newDragAngle : 0;
 			}
 			lastDragAngle = newDragAngle;
-			updateArc(lastDragAngle);
+			changeArc(lastDragAngle);
 			updateClockDisplay(lastDragAngle);
 		}
 	}
